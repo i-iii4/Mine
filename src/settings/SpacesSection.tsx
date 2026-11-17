@@ -16,15 +16,15 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { MoreHorizontal, Unlink } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
+import { MenuSpecView } from "@/components/MenuSpecView";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useSpecMenu } from "@/hooks/useSpecMenu";
+import { menuPlateOf } from "@/lib/floatingLayer";
+import { menuItem } from "@/lib/menuSpec";
+import { lastInputIsKey } from "@/lib/motionInput";
+import type { MenuAction, MenuAnswer, MenuSpec } from "@/types";
 import {
   addKnownVault,
   forgetKnownVault,
@@ -68,6 +68,13 @@ function statsSummary(stats: SpaceStatsState | undefined): string {
   return `${elements} elements · ${stats.markdown_count} markdown · ${stats.media_count} media · ${stats.file_count} files · ${formatBytes(stats.total_bytes)}`;
 }
 
+/** A listed space's actions, as a menu: one command, and under its label
+ *  what it leaves as it is (SPEC_MENU_WINDOW.md, Д2). */
+export const SPACE_ACTIONS_SPEC: MenuSpec = {
+  role: "action",
+  entries: [menuItem("remove", "Remove Space", { icon: "unlink", variant: "detach", detail: "Files stay on disk" })],
+};
+
 interface SpaceRowProps {
   path: string;
   /// Some tab shows this space (SPEC_TABS.md, В69); several rows may be.
@@ -82,6 +89,14 @@ interface SpaceRowProps {
 
 function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // The row's menu, in the menu panel when the menu mode is `window`, else
+  // on the page.
+  const actionsRef = useRef<HTMLButtonElement>(null);
+  const actOnSpace = async (action: MenuAction): Promise<MenuAnswer> => {
+    if (action.kind === "run" && action.id === "remove") onRemove(path);
+    return { kind: "done" };
+  };
+  const actions = useSpecMenu({ spec: SPACE_ACTIONS_SPEC, act: actOnSpace, onOpenChange: setMenuOpen });
   // The rows make room by the level (SPEC_MOTION_LEVELS.md, М8).
   const move = useSortableMove();
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } =
@@ -129,9 +144,27 @@ function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRow
           onPointerDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
-          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+          <DropdownMenu
+            open={actions.onPage}
+            onOpenChange={(next) => {
+              const button = actionsRef.current;
+              if (!next || button === null) {
+                actions.hide();
+                return;
+              }
+              // Asked for now, in the input's handler (МО19).
+              actions.show({
+                rect: menuPlateOf(button).getBoundingClientRect(),
+                opener: { kind: "plate" },
+                byKey: lastInputIsKey(),
+                contextMenu: false,
+              });
+            }}
+            modal={false}
+          >
             <DropdownMenuTrigger asChild>
               <Button
+                ref={actionsRef}
                 variant="ghost"
                 size="icon"
                 aria-label={`Space actions for ${basename(path)}`}
@@ -144,20 +177,15 @@ function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRow
                     ? "opacity-100 duration-(--motion-enter)"
                     : "opacity-0 group-hover/space:opacity-100 group-hover/space:duration-(--motion-enter) group-focus-within/space:opacity-100 group-focus-within/space:duration-(--motion-enter)",
                 )}
+                // The menu is open in the menu panel: the button looks as
+                // it does with its menu open on the page.
+                {...(actions.inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
               >
                 <MoreHorizontal className="size-[13px]" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem variant="detach" onSelect={() => onRemove(path)}>
-                <MenuIconSlot>
-                  <Unlink className="size-[13px]" />
-                </MenuIconSlot>
-                <span className="flex flex-col">
-                  <span>Remove Space</span>
-                  <span className="text-base text-muted-foreground">Files stay on disk</span>
-                </span>
-              </DropdownMenuItem>
+            <DropdownMenuContent>
+              <MenuSpecView spec={SPACE_ACTIONS_SPEC} dispatch={actOnSpace} open={actions.onPage} />
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

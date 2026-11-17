@@ -27,7 +27,7 @@ function fixture() {
     'tsconfig.base.json': '{ "compilerOptions": { "strict": true } }\n',
     'eslint.config.js': 'export default [];\n',
     'Cargo.toml': '[workspace]\nmembers = ["demo"]\n',
-    'demo/Cargo.toml': '[package]\nname = "demo"\n\n[features]\ndefault = []\nextra = []\n',
+    'demo/Cargo.toml': '[package]\nname = "demo"\n\n[features]\ndefault = []\nextra = []\n\n[[test]]\nname = "own_program"\npath = "tests/own_program.rs"\nharness = false\nrequired-features = ["extra"]\n',
     'demo/build.rs': 'fn main() {}\n',
     'demo/src/lib.rs': [
       'pub mod engine;',
@@ -63,6 +63,8 @@ function fixture() {
     'demo/fixtures/elsewhere.json': '{}\n',
     'demo/fixtures/plain.json': '{}\n',
     'demo/tests/outside.rs': 'use demo::helpers::one;\n#[test]\nfn outside() { assert_eq!(one(), 1); }\n',
+    'demo/tests/own_program.rs': 'use demo::helpers::one;\nfn main() { assert_eq!(one(), 1); }\n',
+    'demo/tests/no_tests.rs': 'fn main() {}\n',
     'src/a.ts': 'export const a = 1;\n',
     'src/a.test.ts': [
       "import { a } from './a';",
@@ -176,6 +178,13 @@ test('a command runs only the tests it selects', () => {
     assert.equal(reach.commandRuns('test:rust', 'demo/src/engine/tests.rs'), true);
     assert.equal(reach.commandRuns('test:rust', 'demo/src/gated.rs'), true);
     assert.equal(reach.commandRuns('test:rust', 'demo/tests/outside.rs'), true);
+    // A test target the manifest declares with `harness = false` is its own
+    // program: `cargo test` runs its `main`, with the features it requires.
+    assert.equal(reach.commandRuns('test:rust', 'demo/tests/own_program.rs'), true);
+    assert.equal(reach.commandRuns('test:rust-plain', 'demo/tests/own_program.rs'), false);
+    assert.equal(reach.executes('demo/tests/own_program.rs', 'demo/src/helpers.rs'), true);
+    // Under the harness a file with no `#[test]` runs nothing.
+    assert.equal(reach.commandRuns('test:rust', 'demo/tests/no_tests.rs'), false);
     assert.equal(reach.commandRuns('test:rust', 'scripts/wrap.mjs'), true);
     assert.equal(reach.commandRuns('test:rust-plain', 'demo/src/gated.rs'), false);
     assert.equal(reach.commandRuns('test:rust-plain', 'demo/src/never.rs'), false);

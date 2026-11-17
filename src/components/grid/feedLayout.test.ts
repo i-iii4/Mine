@@ -205,7 +205,7 @@ function feedDriver(initial: Feed) {
     const expected = referenceLayout(feed.blocks, feed.parentWidth, feed.wordWidths, feed.gap, feed.show, referenceColumnOf);
     const previous = last;
     const exact = feed.blocks.length > 0 && generationHasExactDeterministicHeights(feed.blocks, feed.wordWidths, feed.show);
-    memory = { routeKey: ROUTE, parentWidth: feed.parentWidth, layoutGap: feed.gap, show: feed.show, blocks: feed.blocks, layout, exact };
+    memory = { routeKey: ROUTE, parentWidth: feed.parentWidth, layoutGap: feed.gap, show: feed.show, blocks: feed.blocks, layout, wordWidths: feed.wordWidths, exact };
     reference = referenceMemory(feed.blocks, expected, feed.parentWidth, feed.show, exact);
     last = layout;
     return { layout, expected, previous, columns: columns !== null };
@@ -390,7 +390,7 @@ describe("the columns a layout remembers", () => {
   const blocks = Array.from({ length: 12 }, (_, index) => card(index + 1));
   const wordWidths = measured(blocks);
   const layout = layFeedOut({ blocks, parentWidth: 1180, layoutGap: 32, show: "cards", wordWidths, columns: null, last: null });
-  const memory: ColumnMemory = { routeKey: ROUTE, parentWidth: 1180, layoutGap: 32, show: "cards", blocks, layout, exact: true };
+  const memory: ColumnMemory = { routeKey: ROUTE, parentWidth: 1180, layoutGap: 32, show: "cards", blocks, layout, wordWidths, exact: true };
 
   it("are those of the layout for a list that grew at its end", () => {
     const grown = [...blocks, card(13), card(14)];

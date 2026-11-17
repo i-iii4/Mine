@@ -46,7 +46,7 @@ import {
 } from "@/lib/commands";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
-import { DROP_MARKER_WIDTH_PX, TRAFFIC_LIGHT_RESERVE_PX } from "./constants";
+import { DROP_MARKER_WIDTH_PX, TAB_LABEL_CLASS, TRAFFIC_LIGHT_RESERVE_PX } from "./constants";
 import {
   draggedOffset,
   dropMarkerLeft,
@@ -70,7 +70,7 @@ import {
   wheelScrollLeft,
   type FrozenTabWidth,
 } from "./tabLayout";
-import { createSettingsMenu, type SettingsMenu } from "./settingsMenu";
+import { createSettingsMenu, type SettingsMenu, type SettingsMenuActions } from "./settingsMenu";
 import {
   adoptWindowButtonStyleSet,
   chooseWindowButtonStyle,
@@ -79,7 +79,12 @@ import {
   WINDOW_BUTTON_STYLE_SET_EVENT,
   type WindowButtonStyleSetPayload,
 } from "@/lib/buttonStyle";
-import { createTabMenu, type TabMenu } from "./tabMenu";
+import { createTabMenu, type TabMenu, type TabMenuActions } from "./tabMenu";
+import { barSettingsChoice, barSettingsSpec, tabMenuItemId, tabMenuSpec } from "./barMenus";
+import { useBarMenu } from "./useBarMenu";
+import { menuPlateOf } from "@/lib/floatingLayer";
+import { chooseMenuMode, menuMode } from "@/lib/menuMode";
+import { lastInputIsKey } from "@/lib/motionInput";
 import { listenHere } from "./useTabBarState";
 import { logTabBarFailure, type TabBarAction } from "@/lib/tabBarFailure";
 import { roleEasing, roleMs } from "@/lib/motion";
@@ -106,6 +111,10 @@ export const BACK_LABEL = "Back";
 export const FORWARD_LABEL = "Forward";
 export const SETTINGS_MENU_LABEL = "Mine settings";
 export const SEARCH_LABEL = "Find elements";
+
+/** The bar's menus in the menu panel, told apart by these. */
+const TAB_MENU_KEY = "tab";
+const SETTINGS_MENU_KEY = "settings";
 
 /** The traffic lights' reserve (В83). */
 const TRAFFIC_LIGHT_RESERVE_STYLE = { width: TRAFFIC_LIGHT_RESERVE_PX };
@@ -372,16 +381,25 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // ── The bar's menus (В43, В50) ────────────────────────────────────────────
+  // They open in the menu panel when the menu mode is `window`; the bar
+  // page is one row tall, so where the panel takes none the system's own
+  // menus show (SPEC_MENU_WINDOW.md, group Е, МО68а).
+  const barMenu = useBarMenu();
+  // The tab the menu in the panel was opened for.
+  const tabMenuFor = useRef<TabId | null>(null);
+
   // ── Context menu (В50) ─────────────────────────────────────────────────
+  const tabMenuActions = useRef<TabMenuActions>({
+    moveToNewWindow: (id) => run(moveTabToNewWindow(id), "move the tab to a new window"),
+    close: (id) => run(closeTab(id), "close the tab"),
+    closeOthers: (id) => run(closeOtherTabs(id), "close the other tabs"),
+    closeToTheLeft: (id) => run(closeTabsBeside(id, "left"), "close the tabs to the left"),
+    closeToTheRight: (id) => run(closeTabsBeside(id, "right"), "close the tabs to the right"),
+  });
   const menu = useRef<Promise<TabMenu> | null>(null);
-  const openMenu = useCallback((tabId: TabId) => {
-    menu.current ??= createTabMenu({
-      moveToNewWindow: (id) => run(moveTabToNewWindow(id), "move the tab to a new window"),
-      close: (id) => run(closeTab(id), "close the tab"),
-      closeOthers: (id) => run(closeOtherTabs(id), "close the other tabs"),
-      closeToTheLeft: (id) => run(closeTabsBeside(id, "left"), "close the tabs to the left"),
-      closeToTheRight: (id) => run(closeTabsBeside(id, "right"), "close the tabs to the right"),
-    });
+  const openSystemTabMenu = useCallback((tabId: TabId) => {
+    menu.current ??= createTabMenu(tabMenuActions.current);
     const pending = menu.current;
     const shown = latest.current.tabs;
     const index = shown.findIndex((tab) => tab.id === tabId);
@@ -393,19 +411,65 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
         tellFailure("show the tab menu", error);
       });
   }, []);
+  const { open: openBarMenu, update: updateBarMenu, close: closeBarMenu, openKey: barMenuKey } = barMenu;
+  const openMenu = useCallback((tabId: TabId, point: { x: number; y: number }) => {
+    const shown = latest.current.tabs;
+    const index = shown.findIndex((tab) => tab.id === tabId);
+    tabMenuFor.current = tabId;
+    openBarMenu({
+      key: TAB_MENU_KEY,
+      anchor: { x: point.x, y: point.y, width: 0, height: 0 },
+      opener: { kind: "point" },
+      spec: tabMenuSpec(index, shown.length),
+      byKey: false,
+      contextMenu: true,
+      onAction: (action) => {
+        const actions = tabMenuActions.current;
+        switch (tabMenuItemId(action)) {
+          case "move-to-new-window":
+            actions.moveToNewWindow(tabId);
+            break;
+          case "close":
+            actions.close(tabId);
+            break;
+          case "close-others":
+            actions.closeOthers(tabId);
+            break;
+          case "close-left":
+            actions.closeToTheLeft(tabId);
+            break;
+          case "close-right":
+            actions.closeToTheRight(tabId);
+            break;
+          case null:
+            break;
+        }
+      },
+      native: () => openSystemTabMenu(tabId),
+    });
+  }, [openBarMenu, openSystemTabMenu]);
+  // The tabs changed under a tab's menu in the panel: what it may close
+  // follows them, and a menu whose tab is gone goes with it.
+  useEffect(() => {
+    if (barMenuKey !== TAB_MENU_KEY) return;
+    const index = tabs.findIndex((tab) => tab.id === tabMenuFor.current);
+    if (index < 0) closeBarMenu();
+    else updateBarMenu(tabMenuSpec(index, tabs.length));
+  }, [barMenuKey, tabs, closeBarMenu, updateBarMenu]);
 
   // ── The logo's settings menu (В43) ────────────────────────────────────────
+  const settingsMenuActions = useRef<SettingsMenuActions>({
+    openSection: (section) => run(openSettingsWindow(section), "open Settings"),
+    // Dev button styles: this window only; its visible tab says what
+    // is on.
+    chooseButtonStyle: (style) => {
+      const { windowId, tabs: current, activeTab: active } = latestWindow.current;
+      chooseWindowButtonStyle(windowId, style, current.map((tab) => tab.id), active);
+    },
+  });
   const settingsMenu = useRef<Promise<SettingsMenu> | null>(null);
-  const openSettingsMenu = useCallback((button: HTMLElement) => {
-    settingsMenu.current ??= createSettingsMenu({
-      openSection: (section) => run(openSettingsWindow(section), "open Settings"),
-      // Dev button styles: this window only; its visible tab says what
-      // is on.
-      chooseButtonStyle: (style) => {
-        const { windowId, tabs: current, activeTab: active } = latestWindow.current;
-        chooseWindowButtonStyle(windowId, style, current.map((tab) => tab.id), active);
-      },
-    });
+  const openSystemSettingsMenu = useCallback((button: HTMLElement) => {
+    settingsMenu.current ??= createSettingsMenu(settingsMenuActions.current);
     const pending = settingsMenu.current;
     const { left, bottom } = button.getBoundingClientRect();
     pending
@@ -415,6 +479,24 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
         tellFailure("show the settings menu", error);
       });
   }, []);
+  const openSettingsMenu = useCallback((button: HTMLElement) => {
+    openBarMenu({
+      key: SETTINGS_MENU_KEY,
+      anchor: menuPlateOf(button).getBoundingClientRect(),
+      opener: { kind: "plate" },
+      spec: barSettingsSpec(shownButtonStyle(), menuMode()),
+      byKey: lastInputIsKey(),
+      contextMenu: false,
+      onAction: (action) => {
+        const choice = barSettingsChoice(action);
+        if (choice === null) return;
+        if (choice.kind === "section") settingsMenuActions.current.openSection(choice.section);
+        else if (choice.kind === "button-style") settingsMenuActions.current.chooseButtonStyle(choice.style);
+        else chooseMenuMode(choice.mode);
+      },
+      native: () => openSystemSettingsMenu(button),
+    });
+  }, [openBarMenu, openSystemSettingsMenu]);
 
   // ── Dragging: tabs reorder or tear off, the rest drags the window ────────
   const windowDrag = useChromeDragGesture();
@@ -874,7 +956,7 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  openMenu(tab.id);
+                  openMenu(tab.id, { x: event.clientX, y: event.clientY });
                 }}
               >
                 {/* One line that dissolves at the right edge when it does
@@ -882,7 +964,7 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
                 <FadeText
                   text={label}
                   data-tab-label=""
-                  className="flex-1 font-mono text-sm leading-none"
+                  className={TAB_LABEL_CLASS}
                 />
                 {/* Shown on hover only, over the label's dissolved end; a
                     chrome button like the rest of the row (В46), its plate
@@ -920,7 +1002,7 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
               // It moves with the neighbours as the slot changes.
               style={{ width, transform: `translateX(${cardSlot * width}px)`, transition: shiftTransition }}
             >
-              <FadeText text={cardGap.title} className="flex-1 font-mono text-sm leading-none" />
+              <FadeText text={cardGap.title} className={TAB_LABEL_CLASS} />
             </div>
           )}
           {incomingSlot !== null && (
@@ -992,6 +1074,9 @@ export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
           // The tab bar's page is one row tall: a tooltip would be cut off.
           tooltip={false}
           onClick={(event) => openSettingsMenu(event.currentTarget)}
+          // The menu is open in the menu panel: the button looks as a
+          // button with its menu open.
+          {...(barMenuKey === SETTINGS_MENU_KEY ? { "data-state": "open", "aria-expanded": true } : {})}
         >
           <MineLogo />
         </Button>

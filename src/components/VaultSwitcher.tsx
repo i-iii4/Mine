@@ -1,17 +1,8 @@
 import { RemoveSpaceDialog } from "./RemoveSpaceDialog";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealInFinder } from "@/lib/systemActions";
-import { responseFadeClass } from "@/lib/motionClasses";
-import { FolderOpen, FolderPlus, Plus, X } from "lucide-react";
+import { FolderOpen, FolderPlus } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,16 +12,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
-import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
-import { SearchMenuAction } from "@/components/SearchMenuAction";
-import { SearchMenuInput } from "@/components/SearchMenuInput";
+import { MenuSpecView } from "@/components/MenuSpecView";
+import { UnavailableSpaceRow } from "@/components/SpaceList";
+import { useSpecMenu } from "@/hooks/useSpecMenu";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
-import { filterAndRankChannelSearch } from "@/lib/channelSearch";
-import { useMenuRowBlink } from "@/lib/menuBlink";
-import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { forgetKnownVault, listKnownVaults, listSpaces, recordStartupMilestone, selectVault } from "@/lib/commands";
-import type { SpaceEntry } from "@/types";
+import { menuPlateOf } from "@/lib/floatingLayer";
+import { lastInputIsKey } from "@/lib/motionInput";
+import type { MenuAction, MenuAnswer, MenuSpace, MenuSpec, SpaceEntry } from "@/types";
 import { cn } from "@/lib/utils";
 
 interface VaultSwitcherProps {
@@ -44,47 +34,19 @@ interface VaultSwitcherProps {
   onOpenInNewTab?: (vaultId: string) => void;
 }
 
-/// Icon actions inside a menu row: muted at rest, filled on approach.
-///
-/// Mirrors the search field's clear button, the closest existing case of an
-/// icon action living inside a row. Icon size is left to the `icon-xs` button
-/// contract rather than restated here — restating it is what made these glyphs
-/// larger than the same ones elsewhere in the app.
-const ROW_ACTION_CLASS =
-  "text-muted-foreground hover:bg-component-fill-hover hover:text-foreground "
-  + "focus-visible:bg-component-fill-hover focus-visible:text-foreground";
+/** The list of spaces in the space menu's description. */
+export const SPACE_LIST_ID = "spaces";
 
-/// A known space whose folder is not there right now: listed, marked, not a
-/// destination. It can still be forgotten (П26).
-function UnavailableSpaceRow({
-  space,
-  onRequestForget,
-}: {
-  space: SpaceEntry;
-  onRequestForget: () => void;
-}) {
-  return (
-    <div
-      className="group flex h-[var(--menu-row-height)] items-center gap-2 px-plate text-base text-muted-foreground"
-      title={space.path}
-      data-vault-switcher-unavailable={space.path}
-    >
-      <MenuIconSlot />
-      <span className="min-w-0 flex-1 truncate">{space.name}</span>
-      <span className="shrink-0 text-sm group-hover:hidden">Unavailable</span>
-      <button
-        type="button"
-        className={cn(
-          "hidden shrink-0 rounded-1 px-1.5 text-sm group-hover:inline",
-          ROW_ACTION_CLASS,
-        )}
-        onClick={onRequestForget}
-        aria-label={`Forget ${space.name}`}
-      >
-        Forget
-      </button>
-    </div>
-  );
+/**
+ * The space menu as data (SPEC_MENU_WINDOW.md, Г1): the list of spaces as
+ * the whole menu, a list under a search field. `spaces` are the known
+ * spaces but the one on screen, in the order set in the settings.
+ */
+export function spaceMenuSpec(spaces: readonly MenuSpace[], unavailable: readonly MenuSpace[], tabs: boolean): MenuSpec {
+  return {
+    role: "search",
+    entries: [{ kind: "widget", id: SPACE_LIST_ID, widget: { kind: "space_list", spaces: [...spaces], unavailable: [...unavailable], tabs } }],
+  };
 }
 
 function vaultName(path: string): string {
@@ -106,19 +68,32 @@ export function VaultSwitcher({
   // Spaces whose folder cannot be opened right now stay listed and marked
   // instead of vanishing from the list (SPEC_VAULT_LIFECYCLE.md, П26).
   const [unavailableSpaces, setUnavailableSpaces] = useState<SpaceEntry[]>([]);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  // A row is blinked by what it is, a space or a pinned action, not by its
-  // place in the list.
-  const rowBlink = useMenuRowBlink<string>();
+  // The menu of the action bar's switcher, a plain menu on the page. The top
+  // chrome's is described as data (`menu` below).
+  const [barOpen, setBarOpen] = useState(false);
   // The space awaiting removal confirmation. Held here rather than inside the
   // row so the dialog outlives the menu that opened it.
   const [pendingForget, setPendingForget] = useState<string | null>(null);
-  const actionIdPrefix = useId();
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerLabel = vaultName(currentPath);
   const isTopChrome = surface === "topChrome";
+
+  // The order the person set in Settings > Spaces, not the alphabet: the
+  // switcher and the settings list show one sequence (А6.10).
+  const ordered = useMemo(() => (
+    Array.from(new Set(knownVaults)).filter((path) => path !== currentPath)
+  ), [currentPath, knownVaults]);
+
+  // The top chrome's menu as data: the list of spaces, in the menu panel
+  // when the menu mode is `window`, else on the page (SPEC_MENU_WINDOW.md,
+  // Г1). A space with no identity yet cannot open in a new tab.
+  const spec = useMemo(() => spaceMenuSpec(
+    ordered.map((path) => ({ path, name: vaultName(path), tab: (vaultIds.get(path) ?? null) !== null })),
+    unavailableSpaces.map((space) => ({ path: space.path, name: space.name, tab: false })),
+    Boolean(onOpenInNewTab),
+  ), [onOpenInNewTab, ordered, unavailableSpaces, vaultIds]);
+  const menu = useSpecMenu({ spec, act: (action) => actOnMenu(action) });
+  const { hide: hideMenu } = menu;
+  const open = isTopChrome ? menu.open : barOpen;
 
   useEffect(() => {
     let cancelled = false;
@@ -135,41 +110,28 @@ export function VaultSwitcher({
     return () => { cancelled = true; };
   }, [open]);
 
-  const resetMenuSearch = useCallback(() => {
-    setQuery("");
-    setActiveIndex(null);
-  }, []);
+  /** The menu goes: a command of it takes the window somewhere else. */
+  const closeMenu = useCallback(() => {
+    hideMenu();
+    setBarOpen(false);
+  }, [hideMenu]);
 
   const handleSwitch = useCallback(async (path: string) => {
     if (path === currentPath) return;
     void recordStartupMilestone("space_switch_requested").catch(() => {});
-    setOpen(false);
-    resetMenuSearch();
+    closeMenu();
     await selectVault(path);
     onVaultSelected(path);
-  }, [currentPath, onVaultSelected, resetMenuSearch]);
+  }, [closeMenu, currentPath, onVaultSelected]);
 
-  /// The space `path` in a new tab, when this page can open tabs and the
-  /// space has an identity; otherwise null.
-  const newTabOpener = useCallback((path: string): (() => void) | null => {
+  /// The space `path` in a new tab of this window, when this page can open
+  /// tabs and the space has an identity (В52).
+  const openInNewTab = useCallback((path: string) => {
     const vaultId = vaultIds.get(path) ?? null;
-    if (!onOpenInNewTab || vaultId === null) return null;
-    return () => {
-      setOpen(false);
-      resetMenuSearch();
-      onOpenInNewTab(vaultId);
-    };
-  }, [onOpenInNewTab, resetMenuSearch, vaultIds]);
-
-  /// A plain choice switches this tab; with ⌘ the space opens in a new tab
-  /// and this tab keeps its own (В52).
-  const handleChoose = useCallback((path: string, metaKey: boolean) => {
-    if (metaKey && onOpenInNewTab) {
-      newTabOpener(path)?.();
-      return;
-    }
-    void handleSwitch(path);
-  }, [handleSwitch, newTabOpener, onOpenInNewTab]);
+    if (!onOpenInNewTab || vaultId === null) return;
+    closeMenu();
+    onOpenInNewTab(vaultId);
+  }, [closeMenu, onOpenInNewTab, vaultIds]);
 
   // A folder Finder could not show is the tab's notice (SPEC_DEEP_AUDIT.md,
   // Н11, Е6.16); the menu stays put.
@@ -192,206 +154,76 @@ export function VaultSwitcher({
   /// over to Finder, and a dropdown left hanging behind another app is state
   /// the user did not ask to keep.
   const handleRevealCurrent = useCallback(() => {
-    setOpen(false);
-    resetMenuSearch();
+    closeMenu();
     handleReveal(currentPath);
-  }, [currentPath, handleReveal, resetMenuSearch]);
+  }, [closeMenu, currentPath, handleReveal]);
 
   // The menu closes before the folder dialog opens, as after any other
   // chosen row (user's decision of 15.11.2026).
   const handleAddSpace = useCallback(async () => {
-    setOpen(false);
-    resetMenuSearch();
+    closeMenu();
     const selected = await openDialog({ directory: true, multiple: false, canCreateDirectories: true });
     if (!selected) return;
     await selectVault(selected);
     onVaultSelected(selected);
-  }, [onVaultSelected, resetMenuSearch]);
+  }, [closeMenu, onVaultSelected]);
 
-  // The order the person set in Settings > Spaces, not the alphabet: the
-  // switcher and the settings list show one sequence (А6.10).
-  const ordered = useMemo(() => (
-    Array.from(new Set(knownVaults)).filter((path) => path !== currentPath)
-  ), [currentPath, knownVaults]);
-
-  const visibleVaults = useMemo(() => (
-    isTopChrome
-      ? filterAndRankChannelSearch(
-          ordered.map((path) => ({
-            item: path,
-            texts: [vaultName(path), path],
-          })),
-          query,
-        )
-      : ordered
-  ), [isTopChrome, query, ordered]);
-
-  const visibleUnavailable = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return needle
-      ? unavailableSpaces.filter((space) => (
-          space.name.toLocaleLowerCase().includes(needle)
-          || space.path.toLocaleLowerCase().includes(needle)
-        ))
-      : unavailableSpaces;
-  }, [query, unavailableSpaces]);
-
-  // Keyboard order follows visual order: destination spaces, then the two
-  // pinned actions below the divider.
-  const revealActionIndex = visibleVaults.length;
-  const addSpaceActionIndex = visibleVaults.length + 1;
-  const actionCount = visibleVaults.length + 2;
-  const activeActionId = activeIndex === null
-    ? undefined
-    : `${actionIdPrefix}-space-action-${activeIndex}`;
+  /** Carry out what the list of spaces asks: the menu on the page and the
+   *  menu in the panel both come here. */
+  const actOnMenu = async (action: MenuAction): Promise<MenuAnswer> => {
+    if (action.kind !== "widget") return { kind: "done" };
+    const asked = action.action;
+    switch (asked.kind) {
+      case "switch_space":
+        if (asked.new_tab) openInNewTab(asked.path);
+        else void handleSwitch(asked.path);
+        break;
+      case "reveal_space":
+        handleReveal(asked.path);
+        break;
+      case "forget_space":
+        setPendingForget(asked.path);
+        break;
+      case "reveal_current_space":
+        handleRevealCurrent();
+        break;
+      case "add_space":
+        void handleAddSpace();
+        break;
+      // What another widget asks: the list of spaces never does.
+      default:
+        break;
+    }
+    return { kind: "done" };
+  };
 
   const topChromeTrigger = useTopChromeTriggerInteraction({
     dragDisabled: !isTopChrome,
     deferPointerOpen: isTopChrome,
-    onPointerOpen: () => setOpen((current) => !current),
+    onPointerOpen: () => setMenuOpen(!menu.open),
   });
 
-  useEffect(() => {
-    if (!isTopChrome) return;
-    if (!open) {
-      // The menu closed during a row's blink: its command does not run.
-      rowBlink.cancel();
-      resetMenuSearch();
+  /** Open the top chrome's menu off the trigger's plate, asked for in the
+   *  input's own handler (МО19), or take it away. */
+  const setMenuOpen = (next: boolean) => {
+    const trigger = topChromeTrigger.triggerProps.ref.current;
+    if (!next || trigger === null) {
+      hideMenu();
       return;
     }
-    const frame = window.requestAnimationFrame(() => {
-      searchInputRef.current?.focus({ preventScroll: true });
-      searchInputRef.current?.select();
+    menu.show({
+      rect: menuPlateOf(trigger).getBoundingClientRect(),
+      opener: { kind: "plate" },
+      byKey: lastInputIsKey(),
+      contextMenu: false,
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [isTopChrome, open, resetMenuSearch, rowBlink.cancel]);
-
-  useEffect(() => {
-    setActiveIndex((current) => {
-      if (current === null) return current;
-      if (current < actionCount) return current;
-      return actionCount > 0 ? actionCount - 1 : null;
-    });
-  }, [actionCount]);
-
-  const moveActiveIndex = useCallback((direction: 1 | -1) => {
-    if (actionCount <= 0) return;
-    setActiveIndex((current) => {
-      if (current === null) {
-        return direction > 0 ? 0 : actionCount - 1;
-      }
-      const nextIndex = current + direction;
-      if (nextIndex < 0) return 0;
-      if (nextIndex >= actionCount) return actionCount - 1;
-      return nextIndex;
-    });
-  }, [actionCount]);
-
-  const activateIndex = useCallback((index: number | null, metaKey = false) => {
-    if (index === null) return;
-    const path = visibleVaults[index];
-    if (path) {
-      handleChoose(path, metaKey);
-      return;
-    }
-    if (index === revealActionIndex) {
-      handleRevealCurrent();
-      return;
-    }
-    if (index === addSpaceActionIndex) {
-      void handleAddSpace();
-    }
-  }, [
-    addSpaceActionIndex,
-    handleAddSpace,
-    handleChoose,
-    handleRevealCurrent,
-    revealActionIndex,
-    visibleVaults,
-  ]);
-
-  /// What the row at `index` is: a space, or one of the pinned actions.
-  const rowKeyAt = useCallback((index: number): string => {
-    const path = visibleVaults[index];
-    if (path) return `space:${path}`;
-    return index === revealActionIndex ? "reveal" : "add";
-  }, [revealActionIndex, visibleVaults]);
-
-  // A chosen row blinks once before the menu closes and its command runs, as
-  // an item of any other menu does (src/lib/menuBlink.ts; user's decision of
-  // 15.11.2026). A press and Enter in the field choose a row by this one path.
-  const chooseIndex = useCallback((index: number | null, metaKey = false) => {
-    if (index === null) return;
-    rowBlink.choose(rowKeyAt(index), () => activateIndex(index, metaKey));
-  }, [activateIndex, rowBlink.choose, rowKeyAt]);
-
-  // While a row blinks it is the one row lit, out for the first half, so its
-  // highlight comes back in the second half whether a press or Enter chose it,
-  // wherever the pointer goes meanwhile.
-  const rowLit = (index: number): boolean => rowBlink.lit(rowKeyAt(index), activeIndex === index);
-  const rowOff = (index: number): boolean => rowBlink.outAt(rowKeyAt(index));
-  const blinking = rowBlink.blinking;
-
-  const restoreSearchFocus = useCallback(() => {
-    window.requestAnimationFrame(() => {
-      searchInputRef.current?.focus({ preventScroll: true });
-    });
-  }, []);
-
-  const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      // The menu's own Escape decides (onEscapeKeyDown below): Radix hears
-      // the key on the document before the field, and by now has cleared
-      // the query or closed the menu, dropping a blinking row's command.
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    // During a row's blink the menu takes no other key: the list and the
-    // query stay as they were chosen from.
-    if (blinking) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      event.stopPropagation();
-      moveActiveIndex(event.key === "ArrowDown" ? 1 : -1);
-      restoreSearchFocus();
-      return;
-    }
-
-    if (event.key !== "Enter" || activeIndex === null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    // ⌘Return opens the chosen space in a new tab, as ⌘-click does (В52).
-    chooseIndex(activeIndex, event.metaKey);
-  }, [activeIndex, blinking, chooseIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus, rowBlink.cancel]);
-
-  // Radix hears Escape on the document before the field does and would close
-  // the whole menu: with a query typed, the first Escape clears it, the menu
-  // stays open with the caret in the field, and the next one closes it, as
-  // in every field over a list (SPEC_KEYBOARD.md, «Ввод текста в меню»).
-  // During a row's blink Escape drops the command and closes the menu.
-  const handleMenuEscape = useCallback((event: KeyboardEvent) => {
-    if (!query || rowBlink.blinking) return;
-    event.preventDefault();
-    resetMenuSearch();
-    restoreSearchFocus();
-  }, [query, resetMenuSearch, restoreSearchFocus, rowBlink.blinking]);
-
-  const handleOpenChange = useCallback((nextOpen: boolean) => {
-    setOpen(nextOpen);
-  }, []);
+  };
 
   return (
     <TooltipProvider>
     <DropdownMenu
-      open={open}
-      onOpenChange={handleOpenChange}
+      open={isTopChrome ? menu.onPage : barOpen}
+      onOpenChange={isTopChrome ? setMenuOpen : setBarOpen}
     >
       <DropdownMenuTrigger asChild>
         <MenuTextTrigger
@@ -406,6 +238,9 @@ export function VaultSwitcher({
           // The filter row may narrow the name first (useSidebarRowFit.ts).
           data-row-fit-name={isTopChrome ? "" : undefined}
           {...(isTopChrome ? topChromeTrigger.triggerProps : {})}
+          // The menu is open in the menu panel: the trigger looks as it does
+          // with its menu open on the page.
+          {...(isTopChrome && menu.inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
           className={cn(
             isTopChrome
               ? cn(
@@ -430,126 +265,44 @@ export function VaultSwitcher({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         side={isTopChrome ? "bottom" : "top"}
-        align="start"
         onCloseAutoFocus={isTopChrome ? topChromeTrigger.handleCloseAutoFocus : undefined}
-        onEscapeKeyDown={isTopChrome ? handleMenuEscape : undefined}
         widthRole={isTopChrome ? "search" : "action"}
         className={isTopChrome ? "overflow-hidden p-0" : undefined}
         data-vault-switcher-menu={isTopChrome ? "" : undefined}
       >
-        {isTopChrome && (
-          <SearchMenuInput
-            ref={searchInputRef}
-            aria-label="Search spaces"
-            aria-activedescendant={activeActionId}
-            placeholder="Search spaces..."
-            value={query}
-            onChange={(event) => {
-              if (blinking) return;
-              setQuery(event.target.value);
-              setActiveIndex(null);
-            }}
-            onKeyDown={handleSearchKeyDown}
-            data-top-space-search=""
-          />
-        )}
         {isTopChrome ? (
-          <QuantizedMenuScrollArea
-            rowCount={Math.max(visibleVaults.length + visibleUnavailable.length, 1)}
-            maxRows={8}
-            innerClassName="p-surface"
-          >
-            {visibleVaults.length > 0 ? (
-              visibleVaults.map((path, index) => (
-                <SpaceRow
-                  key={path}
-                  id={`${actionIdPrefix}-space-action-${index}`}
-                  path={path}
-                  active={rowLit(index)}
-                  onActive={() => setActiveIndex(index)}
-                  blinkOff={rowOff(index)}
-                  onSwitch={({ metaKey }) => chooseIndex(index, metaKey)}
-                  newTab={onOpenInNewTab ? { open: newTabOpener(path) } : null}
-                  onReveal={() => {
-                    handleReveal(path);
-                  }}
-                  onRequestForget={() => setPendingForget(path)}
-                />
-              ))
-            ) : visibleUnavailable.length === 0 ? (
-              <div className="flex h-[var(--menu-row-height)] items-center gap-2 px-plate text-base text-muted-foreground">
-                <MenuIconSlot />
-                No other spaces
-              </div>
-            ) : null}
-            {visibleUnavailable.map((space) => (
-              <UnavailableSpaceRow
-                key={space.path}
-                space={space}
-                onRequestForget={() => setPendingForget(space.path)}
-              />
-            ))}
-          </QuantizedMenuScrollArea>
-        ) : (
-          <div>
-            {visibleVaults.length > 0 ? (
-              visibleVaults.map((path) => (
-                <DropdownMenuItem
-                  key={path}
-                  onSelect={() => {
-                    void handleSwitch(path);
-                  }}
-                >
-                  <MenuIconSlot />
-                  <span className="min-w-0 truncate">
-                    {vaultName(path)}
-                  </span>
-                </DropdownMenuItem>
-              ))
-            ) : visibleUnavailable.length === 0 ? (
-              <div className="flex items-center gap-2 px-plate py-1.5 text-base text-muted-foreground">
-                <MenuIconSlot />
-                No other spaces
-              </div>
-            ) : null}
-            {visibleUnavailable.map((space) => (
-              <UnavailableSpaceRow
-                key={space.path}
-                space={space}
-                onRequestForget={() => setPendingForget(space.path)}
-              />
-            ))}
-          </div>
-        )}
-        {isTopChrome ? (
-          <div className="border-t border-border p-surface" data-vault-switcher-pinned-actions="">
-            <SearchMenuAction
-              id={`${actionIdPrefix}-space-action-${revealActionIndex}`}
-              active={rowLit(revealActionIndex)}
-              blinkOff={rowOff(revealActionIndex)}
-              onActive={() => setActiveIndex(revealActionIndex)}
-              onPress={() => chooseIndex(revealActionIndex)}
-            >
-              <MenuIconSlot>
-                <FolderOpen className="size-[13px]" />
-              </MenuIconSlot>
-              Reveal in Finder
-            </SearchMenuAction>
-            <SearchMenuAction
-              id={`${actionIdPrefix}-space-action-${addSpaceActionIndex}`}
-              active={rowLit(addSpaceActionIndex)}
-              blinkOff={rowOff(addSpaceActionIndex)}
-              onActive={() => setActiveIndex(addSpaceActionIndex)}
-              onPress={() => chooseIndex(addSpaceActionIndex)}
-            >
-              <MenuIconSlot>
-                <FolderPlus className="size-[13px]" />
-              </MenuIconSlot>
-              Add space
-            </SearchMenuAction>
-          </div>
+          <MenuSpecView spec={spec} dispatch={actOnMenu} open={menu.onPage} />
         ) : (
           <>
+            <div>
+              {ordered.length > 0 ? (
+                ordered.map((path) => (
+                  <DropdownMenuItem
+                    key={path}
+                    onSelect={() => {
+                      void handleSwitch(path);
+                    }}
+                  >
+                    <MenuIconSlot />
+                    <span className="min-w-0 truncate">
+                      {vaultName(path)}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              ) : unavailableSpaces.length === 0 ? (
+                <div className="flex items-center gap-2 px-plate py-1.5 text-base text-muted-foreground">
+                  <MenuIconSlot />
+                  No other spaces
+                </div>
+              ) : null}
+              {unavailableSpaces.map((space) => (
+                <UnavailableSpaceRow
+                  key={space.path}
+                  space={space}
+                  onRequestForget={() => setPendingForget(space.path)}
+                />
+              ))}
+            </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={handleRevealCurrent}>
               <MenuIconSlot>
@@ -578,140 +331,5 @@ export function VaultSwitcher({
       onConfirm={(path) => void handleForget(path)}
     />
     </TooltipProvider>
-  );
-}
-
-/// One space in the switcher: the row switches, the two icons beside it act on
-/// the folder itself.
-///
-/// The icons sit next to the row rather than inside it — the row is a `button`,
-/// and a control nested in a button is invalid markup. They are also plain
-/// buttons rather than an overflow menu: a menu inside an open menu fights the
-/// outer one for pointer and focus, and two actions do not need a container.
-function SpaceRow({
-  id,
-  path,
-  active,
-  blinkOff,
-  onActive,
-  onSwitch,
-  newTab,
-  onReveal,
-  onRequestForget,
-}: {
-  id: string;
-  path: string;
-  active: boolean;
-  /// The row was chosen and its highlight is out (menuBlink.ts).
-  blinkOff: boolean;
-  onActive: () => void;
-  onSwitch: (modifiers: { metaKey: boolean }) => void;
-  /// The Open in New Tab action, on a page that opens tabs. `open` is null
-  /// while the space has no identity yet: the action shows, disabled.
-  newTab: { open: (() => void) | null } | null;
-  onReveal: () => void;
-  onRequestForget: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const name = vaultName(path);
-  const actionsVisible = hovered || active;
-
-  return (
-    <div
-      className="relative"
-      data-vault-switcher-row={path}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-    >
-      <SearchMenuAction
-        id={id}
-        active={active}
-        blinkOff={blinkOff}
-        onActive={onActive}
-        onPress={onSwitch}
-        // Room for the row's icon actions: two, or three with a new tab.
-        className={newTab ? "pr-20" : "pr-14"}
-      >
-        {/* Empty leading slot: the pinned actions below the divider carry
-            icons, and one text column through the whole menu is the icon
-            economy rule (DESIGN_SYSTEM.md). */}
-        <MenuIconSlot />
-        <span className="min-w-0 truncate">{name}</span>
-      </SearchMenuAction>
-      <div
-        className={cn(
-          "absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity",
-          // Buttons that come up under the pointer answer as Отклик: in on
-          // the enter time, out on the exit time (В2; user's decision of
-          // 12.11.2026).
-          responseFadeClass(actionsVisible),
-          actionsVisible ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-        data-vault-switcher-row-actions=""
-      >
-        {/* Each button says its own tooltip through `Button` itself, the
-            one tooltip it shows; its `aria-label` names the space for
-            assistive technology (user's decision of 15.11.2026: an icon
-            button showed its label as a second tooltip beside this one). */}
-        {newTab && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Open ${name} in New Tab`}
-            tooltip="Open in New Tab"
-            className={ROW_ACTION_CLASS}
-            disabled={newTab.open === null}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              newTab.open?.();
-            }}
-            data-vault-switcher-open-in-new-tab=""
-          >
-            {/* The tab bar's own sign for a new tab (В43). */}
-            <Plus />
-          </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Reveal ${name} in Finder`}
-          tooltip="Reveal in Finder"
-          className={ROW_ACTION_CLASS}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onReveal();
-          }}
-        >
-          <FolderOpen />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Remove ${name} from the list`}
-          // The X is the one action in this menu whose consequence is easy to
-          // misread, so the tooltip states what stays untouched.
-          tooltip="Remove from the list — files stay on disk"
-          // The detach colour belongs to the moment the action is aimed at,
-          // not to an icon sitting in a list: a row painted orange at rest
-          // reads as a warning about the space itself.
-          className={cn(ROW_ACTION_CLASS, "hover:text-detach focus-visible:text-detach")}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onRequestForget();
-          }}
-        >
-          <X />
-        </Button>
-      </div>
-    </div>
   );
 }

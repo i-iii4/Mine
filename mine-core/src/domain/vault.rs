@@ -140,7 +140,7 @@ impl VaultWriteLayout {
                     .any(|component| !matches!(component, Component::Normal(_)))
             {
                 return Err(VaultError::InvalidWriteLayout {
-                    reason: format!("write folder must stay inside the vault: {value}"),
+                    reason: format!("write folder must stay inside the space: {value}"),
                 });
             }
             if value

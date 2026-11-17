@@ -463,7 +463,7 @@ describe("CardPeek", () => {
     it("steps the window back and shows the hint once the pointer is slow there, the scrim whole, and comes back off it", () => {
       try {
         const { scrim, surface, nudge, hint, settle } = steppedPeek();
-        expect(hint).toHaveTextContent("ESC to close card");
+        expect(hint).toHaveTextContent("ESC to close element");
         expect(hint).not.toHaveAttribute("data-shown");
         restAt(500, 20, scrim);
         expect(hint).toHaveAttribute("data-shown");
@@ -1818,9 +1818,9 @@ describe("CardPeekPlate", () => {
     expect(header.querySelector("[data-secondary-detail-card-name]")).toHaveTextContent("One");
     const group = header.querySelector<HTMLElement>("[data-chrome-actions]")!;
     const buttons = within(group).getAllByRole("button");
-    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Card actions", "Open as full page", "Close"]);
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Element actions", "Open as full page", "Close"]);
     // The same variant and size as its neighbours.
-    const menu = within(group).getByRole("button", { name: "Card actions" });
+    const menu = within(group).getByRole("button", { name: "Element actions" });
     const expand = within(group).getByRole("button", { name: "Open as full page" });
     const close = within(group).getByRole("button", { name: "Close" });
     expect(expand.getAttribute("data-variant")).toBe(close.getAttribute("data-variant"));
@@ -1835,7 +1835,7 @@ describe("CardPeekPlate", () => {
 
   it("gives the focus back to nothing after a menu a press opened, so no tooltip comes up unasked (12.11.2026)", async () => {
     render(plate(0));
-    const trigger = screen.getByRole("button", { name: "Card actions" });
+    const trigger = screen.getByRole("button", { name: "Element actions" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
     const menu = await screen.findByRole("menu");
     fireEvent.keyDown(menu, { key: "Escape" });

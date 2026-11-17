@@ -618,9 +618,18 @@ export function createReach(root, sources = new Map()) {
       for (const bin of [...declared, ...automatic.filter(item => !declared.some(other => other.root === item.root))]) {
         targets.push({ ...base, kind: 'bin', name: bin.name, crate: bin.name.replace(/-/g, '_'), root: bin.root, requiredFeatures: bin.requiredFeatures });
       }
+      // `[[test]]` names what the manifest says of a test target: its file,
+      // the features it needs, and `harness = false`, a test that is its own
+      // program with a `main` and no `#[test]`.
+      const declaredTests = (manifest.test ?? []).map(test => ({ name: test.name, root: `${member}/${test.path ?? `tests/${test.name}.rs`}`, requiredFeatures: test['required-features'] ?? [], harness: test.harness !== false }));
+      const automaticTests = [];
       const testDirectory = join(root, member, 'tests');
       if (existsSync(testDirectory)) {
-        for (const entry of readdirSync(testDirectory)) if (entry.endsWith('.rs')) targets.push({ ...base, kind: 'test', name: basename(entry, '.rs'), crate: basename(entry, '.rs'), root: `${member}/tests/${entry}`, requiredFeatures: [] });
+        for (const entry of readdirSync(testDirectory)) if (entry.endsWith('.rs')) automaticTests.push({ name: basename(entry, '.rs'), root: `${member}/tests/${entry}`, requiredFeatures: [], harness: true });
+      }
+      for (const item of [...declaredTests, ...automaticTests.filter(found => !declaredTests.some(other => other.root === found.root))]) {
+        if (!isFile(join(root, item.root))) continue;
+        targets.push({ ...base, kind: 'test', name: item.name, crate: item.name.replace(/-/g, '_'), root: item.root, requiredFeatures: item.requiredFeatures, harness: item.harness });
       }
     }
     for (const target of targets) {
@@ -831,7 +840,10 @@ export function createReach(root, sources = new Map()) {
       if (!target.requiredFeatures.every(feature => features.has(feature))) continue;
       const config = { test: true, features };
       for (const module of target.modules.values()) {
-        if (module.conditions.every(condition => cfgHolds(condition, config)) && rustFacts(module.file).tests > 0) compiled.add(module.file);
+        // `cargo test` runs the `main` of a test target without the harness:
+        // its root file is run though it has no `#[test]`.
+        const ownProgram = target.kind === 'test' && target.harness === false && module.file === target.root;
+        if (module.conditions.every(condition => cfgHolds(condition, config)) && (rustFacts(module.file).tests > 0 || ownProgram)) compiled.add(module.file);
       }
     }
     return test => compiled.has(test) || support.has(test);

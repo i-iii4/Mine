@@ -2,7 +2,12 @@ import { MOTION_MOVE_EASE, MOTION_MOVE_MS } from "@/lib/motion";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { setMotionLevel } from "@/test/motionLevel";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import type { DropHover, TabBarState, TabBarTab } from "@/types";
+import type { DropHover, MenuAction, MenuSpec, TabBarState, TabBarTab } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
+import { MENU_MODE_STORAGE_KEY, menuMode } from "@/lib/menuMode";
+import { MENU_PANEL_TO_SOURCE_EVENT } from "@/lib/menuPanelProtocol";
+import { resetMenuPanelSourceForTests } from "@/lib/menuPanelSource";
+import { barSettingsSpec, tabMenuSpec } from "./barMenus";
 import { TAB_BAR_HEIGHT_PX, TAB_DETACH_THRESHOLD_PX, TAB_MAX_WIDTH_PX, TAB_MIN_WIDTH_PX } from "./constants";
 import {
   BACK_LABEL,
@@ -613,6 +618,123 @@ describe("tab menu (В50)", () => {
     });
     expect(menu.create).toHaveBeenCalledTimes(1);
     expect(menu.open).toHaveBeenLastCalledWith("b", 1, 2);
+  });
+});
+
+/// SPEC_MENU_WINDOW.md, group Е: with the menu mode Window the bar's menus
+/// open in the menu panel, described as data; the system's menus show when
+/// the panel takes none (МО68а).
+describe("the bar's menus in the menu panel", () => {
+  interface OpenRequest {
+    anchor: { x: number; y: number; width: number; height: number };
+    opener: unknown;
+    spec: MenuSpec;
+  }
+
+  function opens(): OpenRequest[] {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === "menu_panel_open")
+      .map(([, args]) => (args as { request: OpenRequest }).request);
+  }
+
+  function invokes(name: string) {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === name).map(([, args]) => args);
+  }
+
+  function choice(menuNumber: number, request: number, action: MenuAction) {
+    act(() => {
+      const payload = { menu: menuNumber, seq: request, body: { kind: "action", request, action } };
+      window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_SOURCE_EVENT, { detail: { event: MENU_PANEL_TO_SOURCE_EVENT, payload } }));
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation((command) =>
+      Promise.resolve(command === "menu_panel_close" ? { closed: true, key_returned: true } : null));
+    window.localStorage.setItem(MENU_MODE_STORAGE_KEY, "window");
+    resetMenuPanelSourceForTests(true);
+    menu.open.mockClear();
+    settingsMenu.open.mockClear();
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    resetMenuPanelSourceForTests();
+  });
+
+  it("asks the panel for a tab's menu at the point of the right click, and acts on that tab", async () => {
+    renderBar(barState([tab("a"), tab("b"), tab("c")]));
+    const allowed = fireEvent.contextMenu(tabById("b"), { clientX: 320, clientY: 14 });
+    expect(allowed).toBe(false);
+    expect(opens()).toHaveLength(1);
+    expect(opens()[0]?.anchor).toEqual({ x: 320, y: 14, width: 0, height: 0 });
+    expect(opens()[0]?.opener).toEqual({ kind: "point" });
+    expect(opens()[0]?.spec).toEqual(tabMenuSpec(1, 3));
+    await act(async () => {});
+    // The system's menu stays away.
+    expect(menu.open).not.toHaveBeenCalled();
+
+    choice(1, 1, { kind: "run", id: "close-left" });
+    choice(1, 2, { kind: "run", id: "move-to-new-window" });
+    await act(async () => {});
+    expect(commands.closeTabsBeside).toHaveBeenLastCalledWith("b", "left");
+    expect(commands.moveTabToNewWindow).toHaveBeenLastCalledWith("b");
+  });
+
+  it("sends the panel the menu anew when the tabs change under it, and takes it away with its tab", async () => {
+    const view = renderBar(barState([tab("a"), tab("b"), tab("c")]));
+    fireEvent.contextMenu(tabById("c"), { clientX: 520, clientY: 14 });
+    await act(async () => {});
+    expect(opens()[0]?.spec).toEqual(tabMenuSpec(2, 3));
+    // A tab opens to the right: the menu's tab has a right side to close now.
+    view.update(barState([tab("a"), tab("b"), tab("c"), tab("d")]));
+    await act(async () => {});
+    expect((invokes("menu_panel_update").at(-1) as { spec: MenuSpec }).spec).toEqual(tabMenuSpec(2, 4));
+    expect(invokes("menu_panel_close")).toEqual([]);
+    // The tab closes elsewhere: its menu goes.
+    view.update(barState([tab("a"), tab("b"), tab("d")]));
+    await act(async () => {});
+    expect(invokes("menu_panel_close")).toEqual([expect.objectContaining({ menu: 1, reason: "source" })]);
+  });
+
+  it("shows the system's tab menu when the panel refuses the menu", async () => {
+    vi.mocked(invoke).mockRejectedValue({ kind: "app_inactive" });
+    renderBar(barState([tab("a"), tab("b")]));
+    fireEvent.contextMenu(tabById("a"), { clientX: 120, clientY: 14 });
+    expect(menu.open).not.toHaveBeenCalled();
+    await act(async () => {});
+    await act(async () => {});
+    expect(menu.open).toHaveBeenCalledExactlyOnceWith("a", 0, 2);
+  });
+
+  it("asks the panel for the logo's menu off its button, which looks open meanwhile, and carries out its choices", async () => {
+    renderBar(barState([tab("a"), tab("b")]));
+    const settings = screen.getByRole("button", { name: SETTINGS_MENU_LABEL });
+    fireEvent.click(settings);
+    expect(opens()).toHaveLength(1);
+    expect(opens()[0]?.opener).toEqual({ kind: "plate" });
+    expect(opens()[0]?.spec).toEqual(barSettingsSpec("macos", "window"));
+    await act(async () => {});
+    expect(settings.getAttribute("data-state")).toBe("open");
+    expect(settingsMenu.open).not.toHaveBeenCalled();
+
+    choice(1, 1, { kind: "run", id: "spaces" });
+    await act(async () => {});
+    expect(commands.openSettingsWindow).toHaveBeenLastCalledWith("spaces");
+    // Where the app's menus are drawn, chosen in the menu itself.
+    choice(1, 2, { kind: "choose", id: "menus.mode", value: "web" });
+    await act(async () => {});
+    expect(menuMode()).toBe("web");
+    expect(settingsChanged.broadcastSettingsChange).toHaveBeenCalledWith(MENU_MODE_STORAGE_KEY);
+  });
+
+  it("shows the system's logo menu when the menu mode is Web", async () => {
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    renderBar(barState([tab("a")]));
+    fireEvent.click(screen.getByRole("button", { name: SETTINGS_MENU_LABEL }));
+    await act(async () => {});
+    expect(opens()).toEqual([]);
+    expect(settingsMenu.open).toHaveBeenCalledTimes(1);
   });
 });
 

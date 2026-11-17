@@ -10,7 +10,6 @@ import { setMotionLevel } from "@/test/motionLevel";
 
 import { AlertDialog, AlertDialogContent, AlertDialogTitle } from "./alert-dialog";
 import { Button } from "./button";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "./context-menu";
 import { Dialog, DialogContent, DialogTitle } from "./dialog";
 import {
   DropdownMenu,
@@ -106,36 +105,6 @@ describe("a menu (М1)", () => {
     });
     expect(sub).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
     expect(menuSurface()).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
-  });
-});
-
-describe("a context menu (М2)", () => {
-  function Context() {
-    return (
-      <ContextMenu>
-        <ContextMenuTrigger>Card</ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem>Rename</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    );
-  }
-  const surface = () => document.querySelector<HTMLElement>('[data-slot="context-menu-content"]');
-
-  it("opened by a right click carries no key's mark", () => {
-    render(<Context />);
-    const card = screen.getByText("Card");
-    fireEvent.pointerDown(card, { button: 2 });
-    fireEvent.contextMenu(card);
-    expect(surface()).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
-  });
-
-  it("opened by the keyboard's context menu key carries it", () => {
-    render(<Context />);
-    const card = screen.getByText("Card");
-    fireEvent.keyDown(card, { key: "F10", shiftKey: true });
-    fireEvent.contextMenu(card);
-    expect(surface()).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
   });
 });
 

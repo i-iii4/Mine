@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
 import {
+  blockLayoutSignatureHash,
   buildBlockLayoutSignature,
+  buildFeedSignature,
   buildLayoutGenerationKey,
 } from "./layoutGeneration";
 import { getMasonryColumnCount, getMasonryColumnWidth } from "./masonryLayout";
@@ -141,5 +143,94 @@ describe("buildLayoutGenerationKey", () => {
     expect(keyFor("media")).not.toBe(keyFor("cards"));
     // Cards is the default presentation: an unset one is the same layout.
     expect(keyFor(undefined)).toBe(keyFor("cards"));
+  });
+});
+
+// SPEC_GRID.md, «Кэш при карточке и продолжение раскладки».
+describe("buildFeedSignature", () => {
+  const list = (from: number, count: number) =>
+    Array.from({ length: count }, (_, index) => makeBlock(from + index, { preview_text: `Text ${from + index}` }));
+
+  it("is the same whether folded anew or continued from another list's", () => {
+    const base = list(1, 60);
+    const held = buildFeedSignature(base);
+    const changed = makeBlock(20, { title: "Changed" });
+    const lists: LightBlock[][] = [
+      [...base, ...list(100, 25)],
+      base.map((block) => (block.id === 20 ? changed : block)),
+      base.filter((block) => block.id !== 7),
+      [base[3]!, ...base.slice(0, 3), ...base.slice(4)],
+      base.slice(0, 10),
+      [],
+      list(500, 5),
+    ];
+    for (const blocks of lists) {
+      const continued = buildFeedSignature(blocks, held);
+      const anew = buildFeedSignature(blocks);
+      expect(continued.hash).toBe(anew.hash);
+      expect(continued.blocks).toBe(blocks);
+      expect([...continued.card1]).toEqual([...anew.card1]);
+      expect([...continued.card2]).toEqual([...anew.card2]);
+      expect([...continued.fold1]).toEqual([...anew.fold1]);
+      expect([...continued.fold2]).toEqual([...anew.fold2]);
+      // A signature continued twice is still the list's own.
+      expect(buildFeedSignature(base, continued).hash).toBe(held.hash);
+    }
+  });
+
+  it("is the signature it was given for a list of the same cards", () => {
+    const base = list(1, 30);
+    const held = buildFeedSignature(base);
+    expect(buildFeedSignature([...base], held)).toBe(held);
+  });
+
+  it("differs when a card changes, leaves, arrives or changes places", () => {
+    const base = list(1, 30);
+    const hash = buildFeedSignature(base).hash;
+    const others = [
+      base.map((block) => (block.id === 5 ? makeBlock(5, { preview_text: "Other text" }) : block)),
+      base.slice(1),
+      [...base, makeBlock(99)],
+      [base[1]!, base[0]!, ...base.slice(2)],
+    ];
+    for (const blocks of others) expect(buildFeedSignature(blocks).hash).not.toBe(hash);
+  });
+
+  it("hashes a row once, and a changed row anew", () => {
+    const block = makeBlock(1);
+    expect(blockLayoutSignatureHash(block)).toBe(blockLayoutSignatureHash(block));
+    expect(blockLayoutSignatureHash({ ...block })).toEqual(blockLayoutSignatureHash(block));
+    expect(blockLayoutSignatureHash({ ...block, author: "Someone" })).not.toEqual(blockLayoutSignatureHash(block));
+  });
+
+  it("tells apart two rows whose neighbouring fields share their letters", () => {
+    const first = makeBlock(1, { title: "ab", author: "c" });
+    const second = makeBlock(1, { title: "a", author: "bc" });
+    expect(buildBlockLayoutSignature(first)).not.toBe(buildBlockLayoutSignature(second));
+  });
+});
+
+describe("the generation key and the list's signature", () => {
+  const blocks = [makeBlock(1), makeBlock(2), makeBlock(3)];
+  const keyAt = (parentWidth: number, signature?: ReturnType<typeof buildFeedSignature>) => buildLayoutGenerationKey({
+    blocks,
+    signature,
+    routeKey: "__all__",
+    columnWidth: getMasonryColumnWidth(parentWidth, 220, 32),
+    columnCount: getMasonryColumnCount(parentWidth, 220, 32),
+  });
+
+  it("is the same with the signature handed in and computed", () => {
+    expect(keyAt(1200, buildFeedSignature(blocks))).toBe(keyAt(1200));
+  });
+
+  it("keeps the cards' part for another width: only the columns' part changes", () => {
+    const signature = buildFeedSignature(blocks);
+    const wide = keyAt(1200, signature).split("|");
+    const narrow = keyAt(700, signature).split("|");
+    const part = (key: string[], name: string) => key.find((field) => field.startsWith(`${name}=`));
+    expect(part(narrow, "sig")).toBe(part(wide, "sig"));
+    expect(part(narrow, "sig")).toBe(`sig=${signature.hash}`);
+    expect(part(narrow, "cw")).not.toBe(part(wide, "cw"));
   });
 });

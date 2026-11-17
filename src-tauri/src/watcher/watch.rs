@@ -8,7 +8,7 @@ use anyhow::Result;
 use crate::commands::effects::VaultChangedPayload;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
@@ -18,7 +18,11 @@ use crate::storage::db;
 use crate::util::append_startup_trace;
 use crate::watcher::{events, handler};
 
-const DEBOUNCE_MS: u64 = 300;
+/// How long the watcher collects the events that follow a batch it handled
+/// (SPEC_INTEGRATION.md, «Пачки событий и точное перечитывание»). The window
+/// the watcher already had: until 16.11.2026 it held back `vault-changed` to
+/// one in 300 ms (`DEBOUNCE_MS`); the same window now parts the batches.
+const BATCH_WINDOW: Duration = Duration::from_millis(300);
 const RECOVERY_ERROR_THRESHOLD: u32 = 3;
 const RECOVERY_ERROR_WINDOW: Duration = Duration::from_secs(30);
 
@@ -76,10 +80,116 @@ impl WatcherRecoveryTracker {
     }
 }
 
-/// A running watcher of one space and index slot, with the timer that
-/// commits its deferred removals. Dropping it stops both.
+/// The events a watcher has seen and not handled yet, and when they are due
+/// (SPEC_INTEGRATION.md, «Пачки»). The first event after quiet is due at
+/// once; events that come while a batch is handled and in [`BATCH_WINDOW`]
+/// after it wait for the window to close and are one batch.
+#[derive(Debug, Default)]
+struct EventBatches {
+    waiting: Vec<handler::SeenEvent>,
+    /// The end of the window after the last batch handled.
+    collects_until: Option<Instant>,
+}
+
+impl EventBatches {
+    fn push(&mut self, events: impl IntoIterator<Item = handler::SeenEvent>) {
+        self.waiting.extend(events);
+    }
+
+    /// When the waiting events are due; `None` while none wait.
+    fn due_at(&self, now: Instant) -> Option<Instant> {
+        if self.waiting.is_empty() {
+            return None;
+        }
+        Some(self.collects_until.filter(|until| *until > now).unwrap_or(now))
+    }
+
+    /// Take the waiting events as one batch.
+    fn take(&mut self) -> Vec<handler::SeenEvent> {
+        std::mem::take(&mut self.waiting)
+    }
+
+    /// A batch was handled, at `now`: what comes in the window after it is
+    /// the next batch.
+    fn handled(&mut self, now: Instant) {
+        self.collects_until = Some(now + BATCH_WINDOW);
+    }
+}
+
+/// The batches of one watcher, shared by the thread that sees its events
+/// and the thread that handles them.
+#[derive(Default)]
+struct BatchQueue {
+    state: Mutex<BatchQueueState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct BatchQueueState {
+    batches: EventBatches,
+    stopped: bool,
+}
+
+impl BatchQueue {
+    fn state(&self) -> std::sync::MutexGuard<'_, BatchQueueState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn push(&self, events: Vec<handler::SeenEvent>) {
+        self.state().batches.push(events);
+        self.changed.notify_all();
+    }
+
+    /// Wait for the next batch; `None` once the watcher is stopped.
+    fn next_batch(&self) -> Option<Vec<handler::SeenEvent>> {
+        let mut state = self.state();
+        loop {
+            if state.stopped {
+                return None;
+            }
+            let now = Instant::now();
+            state = match state.batches.due_at(now) {
+                Some(due) if due <= now => return Some(state.batches.take()),
+                Some(due) => {
+                    self.changed
+                        .wait_timeout(state, due - now)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0
+                }
+                None => self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner),
+            };
+        }
+    }
+
+    fn handled(&self) {
+        self.state().batches.handled(Instant::now());
+    }
+}
+
+/// Owns the thread that handles a watcher's batches: dropping it ends the
+/// thread, and the names kept for the space are no longer followed.
+struct BatchWorker {
+    queue: Arc<BatchQueue>,
+    root: std::path::PathBuf,
+}
+
+impl Drop for BatchWorker {
+    fn drop(&mut self) {
+        self.queue.state().stopped = true;
+        self.queue.changed.notify_all();
+        crate::storage::reconcile::forget_kept_files(&self.root);
+    }
+}
+
+/// A running watcher of one space and index slot, with the thread that
+/// handles its events in batches and the timer that commits its deferred
+/// removals. Dropping it stops all three.
 pub struct VaultWatcher {
     _events: RecommendedWatcher,
+    _batches: BatchWorker,
     _removals: RemovalTimer,
     layout: VaultLayout,
 }
@@ -97,6 +207,10 @@ impl VaultWatcher {
         Self {
             _events: notify::recommended_watcher(|_: notify::Result<notify::Event>| {})
                 .expect("an idle watcher needs no path"),
+            _batches: BatchWorker {
+                queue: Arc::default(),
+                root: layout.root().to_path_buf(),
+            },
             _removals: RemovalTimer(handler::RemovalTimerStop::default()),
             layout: layout.clone(),
         }
@@ -135,11 +249,27 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
         &format!("db_open elapsed_ms={}", started.elapsed().as_millis()),
     );
 
-    // Debounce: track last emit time to avoid flooding the frontend
-    let last_emit: Arc<Mutex<Instant>> =
-        Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10)));
     let recovery = Arc::new(Mutex::new(WatcherRecoveryTracker::default()));
     let removals = start_removal_timer(app, vault)?;
+    let queue = Arc::new(BatchQueue::default());
+    let batches = BatchWorker {
+        queue: Arc::clone(&queue),
+        root: vault.root().to_path_buf(),
+    };
+    {
+        let queue = Arc::clone(&queue);
+        let app = app.clone();
+        let vault = vault.clone();
+        let recovery = Arc::clone(&recovery);
+        std::thread::Builder::new()
+            .name("watcher-batches".to_string())
+            .spawn(move || {
+                while let Some(batch) = queue.next_batch() {
+                    handle_batch(&app, &vault, &conn, &recovery, &batch);
+                    queue.handled();
+                }
+            })?;
+    }
 
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
@@ -147,6 +277,9 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
                 Ok(e) => e,
                 Err(e) => {
                     log::error!("watcher error: {e}");
+                    // What the watcher was told no longer says which files
+                    // are there.
+                    crate::storage::reconcile::forget_kept_files(vault_clone.root());
                     record_watcher_error(
                         &app_clone,
                         &vault_clone,
@@ -157,82 +290,39 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
                     return;
                 }
             };
+            if event.need_rescan() {
+                // The system dropped events: only a pass over the space
+                // tells what happened (SPEC_INTEGRATION.md, «Индекс имён
+                // файлов»).
+                log::warn!("the watcher of {} lost events", vault_clone.root().display());
+                crate::storage::reconcile::forget_kept_files(vault_clone.root());
+                crate::commands::freshness::request_pass(&app_clone, vault_clone.clone());
+            }
 
             let state = app_clone.state::<AppState>();
+            // The names kept for the space follow every event, the ones not
+            // handled further included (Mine's own writes).
             let vault_events: Vec<_> = events::classify_notify_event(&event, &vault_clone)
                 .into_iter()
-                .filter(|vault_event| !state.is_path_suppressed(vault_event.path()))
-                .filter(|vault_event| !is_own_note_write(&vault_clone, vault_event))
+                .map(|vault_event| handler::see_event(&vault_clone, vault_event))
+                .filter(|seen| !state.is_path_suppressed(seen.event.path()))
+                .filter(|seen| !is_own_note_write(&vault_clone, &seen.event))
                 .collect();
             if vault_events.is_empty() {
                 return;
             }
             // The sessions editing these notes hear of the change now, past
-            // the window of `vault-changed` and whatever the index is busy
-            // with (SPEC_EDITING.md, Л4.1).
+            // the batch and whatever the index is busy with (SPEC_EDITING.md,
+            // Л4.1).
             crate::commands::edit_sessions::announce_outside_changes(
                 &app_clone,
                 &vault_clone,
-                vault_events.iter().filter(|vault_event| is_note_event(vault_event)).map(events::VaultEvent::path),
+                vault_events
+                    .iter()
+                    .filter(|seen| is_note_event(&seen.event))
+                    .map(|seen| seen.event.path()),
             );
-
-            let path = vault_clone.root().to_string_lossy().into_owned();
-            if state.freshness.mark_dirty_if_running(&path) {
-                return;
-            }
-            if state.mark_dirty_if_syncing(&path) {
-                return;
-            }
-
-            let mut any_changed = false;
-            let mut any_error = false;
-            // A deletion waits for its rename window: queuing it wakes the
-            // removal timer, which commits it when the window passes.
-            for ve in &vault_events {
-                match handler::handle_event(&conn, &vault_clone, ve, Some(&app_clone)) {
-                    Ok(changed) => any_changed |= changed,
-                    Err(e) => {
-                        any_error = true;
-                        log::warn!("watcher handle_event: {e:#}");
-                        record_watcher_error(
-                            &app_clone,
-                            &vault_clone,
-                            &recovery,
-                            "handler",
-                            format!("{e:#}"),
-                        );
-                    }
-                }
-            }
-            if !any_error {
-                recovery
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .record_success();
-            }
-            // The notes of this batch are checked for iCloud conflicts by
-            // one helper run (SPEC_ICLOUD_CONFLICTS.md, ВК4).
-            crate::commands::conflicts::schedule_paths_check(
-                &app_clone,
-                &vault_clone,
-                vault_events.iter().map(events::VaultEvent::path),
-            );
-            if !any_changed {
-                return;
-            }
-
-            // Debounce: emit at most once per DEBOUNCE_MS
-            let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
-            let now = Instant::now();
-            if now.duration_since(*last) >= Duration::from_millis(DEBOUNCE_MS) {
-                *last = now;
-                crate::commands::space_events::emit_to_space_root(
-                    &app_clone,
-                    vault_clone.root(),
-                    "vault-changed",
-                    VaultChangedPayload::from_outside(vault_clone.root().to_string_lossy().into_owned()),
-                );
-            }
+            queue.push(vault_events);
         })?;
 
     watcher.watch(vault.root(), RecursiveMode::Recursive)?;
@@ -246,9 +336,60 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
 
     Ok(VaultWatcher {
         _events: watcher,
+        _batches: batches,
         _removals: removals,
         layout: vault.clone(),
     })
+}
+
+/// Handle one batch of the watcher's events and tell the feed after it
+/// (SPEC_INTEGRATION.md, «Пачки»).
+fn handle_batch(
+    app: &AppHandle,
+    vault: &VaultLayout,
+    conn: &rusqlite::Connection,
+    recovery: &Arc<Mutex<WatcherRecoveryTracker>>,
+    batch: &[handler::SeenEvent],
+) {
+    let state = app.state::<AppState>();
+    let path = vault.root().to_string_lossy().into_owned();
+    // A pass over the whole space is running: it runs again and sees
+    // everything this batch is about.
+    if state.freshness.mark_dirty_if_running(&path) || state.mark_dirty_if_syncing(&path) {
+        return;
+    }
+
+    let outcome = handler::handle_batch(conn, vault, batch, Some(app));
+    // A deletion waits for its rename window: queuing it wakes the removal
+    // timer, which commits it when the window passes.
+    for error in &outcome.errors {
+        log::warn!("watcher handle_batch: {error:#}");
+        record_watcher_error(app, vault, recovery, "handler", format!("{error:#}"));
+    }
+    if outcome.errors.is_empty() {
+        recovery
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .record_success();
+    }
+    // The notes of this batch are checked for iCloud conflicts by one
+    // helper run (SPEC_ICLOUD_CONFLICTS.md, ВК4).
+    crate::commands::conflicts::schedule_paths_check(
+        app,
+        vault,
+        batch.iter().map(|seen| seen.event.path()),
+    );
+    if outcome.full_pass {
+        crate::commands::freshness::request_pass(app, vault.clone());
+    }
+    if outcome.changed {
+        crate::commands::space_events::emit_to_space_root(
+            app,
+            vault.root(),
+            "vault-changed",
+            VaultChangedPayload::from_outside(path),
+        );
+    }
 }
 
 /// Whether `event` is a note changed by Mine itself: the file holds exactly
@@ -492,6 +633,80 @@ fn record_watcher_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn media_event(name: &str) -> handler::SeenEvent {
+        handler::SeenEvent {
+            event: events::VaultEvent::MediaChanged(std::path::PathBuf::from(format!(
+                "/spaces/A/Media/{name}"
+            ))),
+            path: crate::storage::reconcile::SeenPath::File,
+        }
+    }
+
+    /// SPEC_INTEGRATION.md, «Пачки»: the first event after quiet is due at
+    /// once, with no window to wait out: a card the clipper saved reaches
+    /// the feed as soon as before.
+    #[test]
+    fn the_first_event_after_quiet_is_handled_at_once() {
+        let start = Instant::now();
+        let mut batches = EventBatches::default();
+        assert_eq!(batches.due_at(start), None, "nothing waits");
+
+        batches.push([media_event("first.jpg")]);
+        assert_eq!(batches.due_at(start), Some(start));
+        assert_eq!(batches.take().len(), 1);
+        batches.handled(start);
+
+        // Quiet again once the window after the batch has passed.
+        let later = start + BATCH_WINDOW;
+        batches.push([media_event("later.jpg")]);
+        assert_eq!(batches.due_at(later), Some(later));
+    }
+
+    /// A hundred events in a row are two batches: the first event alone, at
+    /// once, and the ninety-nine that come while it is handled and in the
+    /// window after it, when the window closes.
+    #[test]
+    fn a_hundred_events_in_a_row_make_two_batches() {
+        let start = Instant::now();
+        let mut batches = EventBatches::default();
+        let mut handled = Vec::new();
+
+        batches.push([media_event("0.jpg")]);
+        assert_eq!(batches.due_at(start), Some(start));
+        handled.push(batches.take().len());
+        // The first batch took 20 ms; events kept coming meanwhile.
+        for event in 1..40 {
+            batches.push([media_event(&format!("{event}.jpg"))]);
+        }
+        let first_done = start + Duration::from_millis(20);
+        batches.handled(first_done);
+        let closes = first_done + BATCH_WINDOW;
+        for event in 40..100 {
+            batches.push([media_event(&format!("{event}.jpg"))]);
+            let now = first_done + Duration::from_millis(event);
+            assert_eq!(batches.due_at(now), Some(closes), "event {event} waits for the window");
+        }
+        assert_eq!(batches.due_at(closes), Some(closes));
+        handled.push(batches.take().len());
+        batches.handled(closes);
+
+        assert_eq!(handled, [1, 99]);
+        assert_eq!(batches.due_at(closes + Duration::from_secs(1)), None);
+    }
+
+    /// The thread that handles batches gets the first event without a wait
+    /// and nothing more once the watcher is stopped.
+    #[test]
+    fn the_queue_hands_out_a_waiting_batch_and_ends_when_stopped() {
+        let queue = BatchQueue::default();
+        queue.push(vec![media_event("a.jpg"), media_event("b.jpg")]);
+        assert_eq!(queue.next_batch().map(|batch| batch.len()), Some(2));
+        queue.handled();
+        queue.state().stopped = true;
+        queue.push(vec![media_event("c.jpg")]);
+        assert_eq!(queue.next_batch(), None);
+    }
 
     #[test]
     fn recovery_starts_once_after_three_consecutive_errors() {

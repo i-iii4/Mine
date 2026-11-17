@@ -14,13 +14,13 @@ import { usePanelMenu, type PanelMenuRequest } from "./usePanelMenu";
 
 const SPEC: MenuSpec = {
   role: "action",
-  entries: [{ kind: "item", id: "reveal", label: "Reveal in Finder", icon: null, variant: "default", truncate: false }],
+  entries: [{ kind: "item", id: "reveal", label: "Reveal in Finder", icon: null, variant: "default", truncate: false, disabled: false, stays_open: false, plain: false, detail: null }],
 };
 
 function request(on: Partial<Pick<PanelMenuRequest, "onAction" | "onClosed">> = {}): PanelMenuRequest {
   return {
     anchor: { x: 100, y: 100, width: 24, height: 24 },
-    opener: { kind: "plate", align: "end" },
+    opener: { kind: "plate" },
     menu: { spec: SPEC, byKey: false },
     onAction: on.onAction ?? (() => ({ kind: "done" })),
     onClosed: on.onClosed ?? (() => undefined),

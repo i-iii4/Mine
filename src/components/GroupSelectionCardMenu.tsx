@@ -1,183 +1,77 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { MoreHorizontal, Plus, Trash2, Unlink } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cardMenuBadgeOf } from "./CardHoverMenu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
-import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
-import type { LightBlock, TagCount } from "@/types";
-import { selectedElementCountLabel } from "@/lib/groupSelection";
-import {
-  BatchCollectionPicker,
-  COLLECTION_PICKER_CONTENT_CLASS,
-  type MembershipAnswer,
-} from "./CollectionPicker";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useGroupSelectionMenu, type GroupSelectionMenuInput } from "@/hooks/useGroupSelectionMenu";
+import { useSpecMenu } from "@/hooks/useSpecMenu";
+import { menuPlateOf } from "@/lib/floatingLayer";
+import { lastInputIsKey } from "@/lib/motionInput";
+import { MenuSpecView } from "./MenuSpecView";
 
-interface GroupSelectionCardMenuProps {
-  selectedBlocks: readonly LightBlock[];
-  tags: TagCount[];
-  currentTag?: string;
-  openRequestSequence?: number;
-  onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
-  /** The feed's `requestDeleteSelection()`: the menu only asks; the window
-   *  is the feed's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
-  onRequestDeleteSelection: () => void;
-  onMergeSelectedBlocks: () => void;
-  onClearSelection: () => void;
-}
-
+/**
+ * The selection's menu on a selected card, opened by ⌘K: the selection's one
+ * description (src/lib/groupSelectionMenu.ts), in the menu panel when the
+ * menu mode is `window`, else on the page, out of the chord's plate either
+ * way (SPEC_CARD_STATES.md, С8.8; SPEC_MENU_WINDOW.md, МО16).
+ */
 export function GroupSelectionCardMenu({
-  selectedBlocks,
-  tags,
-  currentTag,
   openRequestSequence = 0,
-  onLoadBlockTags,
-  onBatchSetTag,
-  onCreateAndAssignBatch,
-  onRequestDeleteSelection,
-  onMergeSelectedBlocks,
-  onClearSelection,
-}: GroupSelectionCardMenuProps) {
-  const actions = useGroupSelectionMenuActions({
-    selectedBlocks,
-    currentTag,
-    onLoadBlockTags,
-    onBatchSetTag,
-    onCreateAndAssignBatch,
-  });
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuOpenRef = useRef(false);
-  const connectTriggerRef = useRef<HTMLDivElement>(null);
+  ...props
+}: GroupSelectionMenuInput & { openRequestSequence?: number }) {
+  const menu = useGroupSelectionMenu("menu", props);
+  const specMenu = useSpecMenu({ spec: menu.spec, largest: menu.largest, act: menu.act, onOpenChange: menu.setOpen });
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const lastOpenRequestSequenceRef = useRef(0);
+  const openRef = useRef(false);
+  openRef.current = specMenu.open;
+  const { show, hide } = specMenu;
 
   const updateMenuOpen = useCallback((open: boolean) => {
-    menuOpenRef.current = open;
-    setMenuOpen(open);
-    if (!open) {
-      actions.setConnectOpen(false);
+    const trigger = triggerRef.current;
+    if (!open || trigger === null) {
+      hide();
+      return;
     }
-  }, [actions]);
+    // The menu comes out of the chord's plate at the card's corner.
+    show({
+      rect: (cardMenuBadgeOf(trigger) ?? menuPlateOf(trigger)).getBoundingClientRect(),
+      opener: { kind: "plate" },
+      byKey: lastInputIsKey(),
+      contextMenu: false,
+    });
+  }, [hide, show]);
 
   useEffect(() => {
     if (openRequestSequence <= lastOpenRequestSequenceRef.current) return;
     lastOpenRequestSequenceRef.current = openRequestSequence;
-    updateMenuOpen(!menuOpenRef.current);
+    updateMenuOpen(!openRef.current);
   }, [openRequestSequence, updateMenuOpen]);
 
-  // The selection stays until the answer (SPEC_DEEP_AUDIT.md, Е6.1).
-  const handleDisconnectFromCollection = () => {
-    updateMenuOpen(false);
-    void actions.disconnectFromCurrentCollection().then((applied) => {
-      if (applied) onClearSelection();
-    });
-  };
-
-  const handleDelete = () => {
-    updateMenuOpen(false);
-    onRequestDeleteSelection();
-  };
-
-  const handleMerge = () => {
-    updateMenuOpen(false);
-    onMergeSelectedBlocks();
-  };
-
-  if (selectedBlocks.length === 0) return null;
+  if (props.selectedBlocks.length === 0) return null;
 
   return (
-    <>
-      <DropdownMenu
-        open={menuOpen}
-        onOpenChange={updateMenuOpen}
-        modal={false}
-      >
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="default"
-            size="icon-xs"
-            // Only an anchor: the menu comes out of the chord's plate at this corner
-            // (SPEC_CARD_STATES.md, С8.8).
-            className="pointer-events-none absolute right-2 top-2 z-[7] opacity-0"
-            data-feed-grid-batch-menu-trigger=""
-          >
-            <MoreHorizontal className="size-[13px]" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          plateOf={cardMenuBadgeOf}
-          data-feed-grid-batch-menu=""
+    <DropdownMenu open={specMenu.onPage} onOpenChange={updateMenuOpen} modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          ref={triggerRef}
+          type="button"
+          variant="default"
+          size="icon-xs"
+          // Only an anchor: the menu comes out of the chord's plate at this corner
+          // (SPEC_CARD_STATES.md, С8.8).
+          className="pointer-events-none absolute right-2 top-2 z-[7] opacity-0"
+          data-feed-grid-batch-menu-trigger=""
+          // The menu is open in the panel: the anchor says so as it does with
+          // its menu open on the page.
+          {...(specMenu.inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
         >
-          <div
-            className="px-plate py-1.5 font-mono text-sm text-muted-foreground"
-            data-feed-grid-batch-menu-count=""
-          >
-            {selectedElementCountLabel(selectedBlocks.length)}
-          </div>
-          <DropdownMenuSeparator />
-          <DropdownMenuSub open={actions.connectOpen} onOpenChange={actions.setConnectOpen}>
-            <DropdownMenuSubTrigger ref={connectTriggerRef}>
-              <MenuIconSlot>
-                <Plus className="size-[13px]" />
-              </MenuIconSlot>
-              Connect
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
-              <BatchCollectionPicker
-                selectedSlugs={actions.selectedSlugs}
-                tags={tags}
-                tagLookup={actions.tagLookup}
-                onBatchSetTag={actions.batchSetTag}
-                onCreateAndAssign={actions.createAndAssignBatch}
-                onRequestClose={() => {
-                  actions.setConnectOpen(false);
-                  requestAnimationFrame(() => connectTriggerRef.current?.focus());
-                }}
-              />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          {currentTag && (
-            <DropdownMenuItem variant="detach" onSelect={handleDisconnectFromCollection}>
-              <MenuIconSlot>
-                <Unlink className="size-[13px]" />
-              </MenuIconSlot>
-              Disconnect
-            </DropdownMenuItem>
-          )}
-          {selectedBlocks.length >= 2 && (
-            <DropdownMenuItem onSelect={handleMerge}>
-              <MenuIconSlot />
-              Merge
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem variant="destructive" onSelect={handleDelete}>
-            <MenuIconSlot>
-              <Trash2 className="size-[13px]" />
-            </MenuIconSlot>
-            Delete
-          </DropdownMenuItem>
-          {actions.actionError && (
-            <>
-              <DropdownMenuSeparator />
-              <div className="px-plate py-1.5 text-sm text-destructive">
-                {actions.actionError}
-              </div>
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
+          <MoreHorizontal className="size-[13px]" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent plateOf={cardMenuBadgeOf} data-feed-grid-batch-menu="">
+        <MenuSpecView spec={menu.spec} dispatch={menu.act} open={specMenu.onPage} />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

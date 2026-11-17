@@ -2602,7 +2602,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
 
   // In M from the right part's sides and bottom, and from its top by M less
   // the window's line, so the line lies on the top row's and the header
-  // fills the sidebar's first row; with «Peek width» Fit card never wider
+  // fills the sidebar's first row; with «Peek width» Fit element never wider
   // than the card, and with the panel under the content no wider than the
   // content, the auto margins centring it once the right part is wider (О3).
   const placeStyle: CSSProperties = {
@@ -2725,7 +2725,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         data-shown={hintShown ? "" : undefined}
       >
         <ArrowDown className="size-4" />
-        ESC to close card
+        ESC to close element
       </div>
     </div>
     </PeekStanceContext.Provider>
@@ -2765,7 +2765,7 @@ export function CardPeekPlate({
   onCheckFileName: (block: PeekBlock, newStem: string) => Promise<RenameBlockError | null>;
   /** The card's name, for the card's `Rename…` to reach. */
   nameFieldRef?: Ref<ChromeNameFieldHandle>;
-  /** Chooses «Card view: Full page»: the same card stands full (О9, О16). */
+  /** Chooses «Element view: Full page»: the same card stands full (О9, О16). */
   onExpand: () => void;
   onClose: () => void;
   menuOpenRequestSequence: number;

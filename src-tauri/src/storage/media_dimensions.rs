@@ -84,8 +84,9 @@ pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
     // live under a `.jpg` path while their contents follow rule П6 — a picture
     // that uses its alpha channel is PNG inside — and trusting the extension
     // made those unreadable, which reconciliation reports as a broken preview.
-    ImageReader::open(path)
-        .ok()?
+    ImageReader::new(std::io::BufReader::new(
+        crate::storage::cloud_files::open(path).ok()?,
+    ))
         .with_guessed_format()
         .ok()?
         .into_dimensions()
@@ -113,7 +114,7 @@ pub fn extract_video_dimensions(path: &Path) -> Option<(u32, u32)> {
     if crate::storage::cloud_files::is_content_offloaded(path) {
         return None;
     }
-    let file = std::fs::File::open(path).ok()?;
+    let file = crate::storage::cloud_files::open(path).ok()?;
     let size = file.metadata().ok()?.len();
     let reader = std::io::BufReader::new(file);
     let mp4 = mp4::Mp4Reader::read_header(reader, size).ok()?;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
-import { CHANNEL_ICON_SPRING_MS, springSettleMs } from "./channelIcon";
+import { SPRING_MS, springSettleMs } from "./spring";
 import { MODAL_SURFACE_CLASS } from "@/components/ui/modal-window";
 import { MOTION_SURFACE_MS, type MotionLevel } from "./motion";
 import {
@@ -105,12 +105,12 @@ const WINDOW = { x: 0, y: 0, width: 1000, height: 700 };
 const CARD = { x: -120, y: 260, width: 200, height: 150 };
 
 describe("card peek spring (SPEC_CARD_PEEK.md, «Величины», О12)", () => {
-  it("has a response of its own, faster than the stack's, its time by the stack's rule", () => {
+  it("has a response of its own, faster than the interface's spring, its time by the same rule", () => {
     expect(CARD_PEEK_SPRING_RESPONSE_S).toBe(0.25);
     expect(CARD_PEEK_SPRING_MS).toBe(springSettleMs(0.25));
-    expect(CARD_PEEK_SPRING_MS).toBeLessThan(CHANNEL_ICON_SPRING_MS);
-    // The stack keeps its own: 0.3 s lands in 441 ms.
-    expect(springSettleMs(0.3)).toBe(CHANNEL_ICON_SPRING_MS);
+    expect(CARD_PEEK_SPRING_MS).toBeLessThan(SPRING_MS);
+    // The interface's spring keeps its own: 0.3 s lands in 441 ms.
+    expect(springSettleMs(0.3)).toBe(SPRING_MS);
   });
 
   it("lands from rest in its own time, never past its target", () => {

@@ -179,7 +179,7 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 |---|---|---|
 | Theme: System / Light / Dark | пилюля `Tabs` (size `panel`) | `theme` |
 | Motion: Full / Minimal / Off, без подписи | пилюля `Tabs` (size `panel`) | `mine.motion` |
-| Card corners: Square / 4 | пилюля `Tabs` (size `panel`) | `mine.cardRadius` |
+| Element corners: Square / 4 | пилюля `Tabs` (size `panel`) | `mine.cardRadius` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
 
 Строка `Motion` (решение пользователя 11.11.2026) показывает действующий уровень

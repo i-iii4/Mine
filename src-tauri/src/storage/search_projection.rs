@@ -53,8 +53,47 @@ pub fn read_search_snapshot(
     limit: usize,
     cursor: Option<&SearchPageToken>,
 ) -> Result<SearchSnapshot> {
-    let (snapshot, synced) = projection::read_projection_snapshot(conn, |conn, generation| {
-        let synced = search_engine::sync_search_documents(conn)?;
+    read_search_snapshot_observed(
+        conn,
+        tag,
+        query,
+        limit,
+        cursor,
+        &mut search_engine::SearchRun::unobserved(),
+    )
+}
+
+/// [`read_search_snapshot`] followed by its caller: `run` stops the search
+/// between its steps once a newer one took its place, and takes the time of
+/// each step (SPEC_SEARCH.md, «Отмена устаревшего запроса», «Замер шагов»).
+///
+/// The documents are synced inside the snapshot: a snapshot that fails or is
+/// stopped takes its sync back with it, the synced revision included, and the
+/// next search syncs again.
+///
+/// A sync that cannot write because another connection is writing the index
+/// (the warm-up rebuilding the documents) is left to the next search: this
+/// one answers from the documents as they are, as a read-only search does,
+/// instead of failing with a locked database.
+pub fn read_search_snapshot_observed(
+    conn: &Connection,
+    tag: Option<&str>,
+    query: &str,
+    limit: usize,
+    cursor: Option<&SearchPageToken>,
+    run: &mut search_engine::SearchRun<'_>,
+) -> Result<SearchSnapshot> {
+    projection::read_projection_snapshot(conn, |conn, generation| {
+        let synced = run.step(search_engine::SearchStep::Sync, |run| {
+            search_engine::sync_search_documents_observed(conn, run)
+        });
+        match synced {
+            Ok(_) => {}
+            Err(error) if is_database_busy(&error) => {
+                log::warn!("search documents are being written by another connection; searching them as they are: {error:#}");
+            }
+            Err(error) => return Err(error),
+        }
         let search_generation = current_revision(conn)?;
         let query_fingerprint = search_query_fingerprint(tag, query);
         let cursor_matches = cursor.is_some_and(|token| {
@@ -66,8 +105,14 @@ pub fn read_search_snapshot(
         let offset = cursor
             .filter(|_| cursor_matches)
             .map_or(0, |token| token.offset);
-        let (blocks, has_more) =
-            search_engine::search_grid_blocks_prepared(conn, tag, offset, limit.max(1), query)?;
+        let (blocks, has_more) = search_engine::search_grid_blocks_prepared(
+            conn,
+            tag,
+            offset,
+            limit.max(1),
+            query,
+            run,
+        )?;
         let next_cursor = has_more.then(|| SearchPageToken {
             projection_revision: generation,
             search_revision: search_generation,
@@ -75,19 +120,31 @@ pub fn read_search_snapshot(
             query_fingerprint,
         });
 
-        let snapshot = SearchSnapshot {
+        Ok(SearchSnapshot {
             generation,
             search_generation,
             blocks,
             has_more,
             next_cursor,
             cursor_reset,
-        };
-        Ok((snapshot, synced))
-    })?;
-    // The savepoint is released: only now are the synced documents real.
-    synced.record_committed(conn);
-    Ok(snapshot)
+        })
+    })
+}
+
+/// Whether `error` is SQLite refusing a write because another connection
+/// holds the write lock or has written since this one's snapshot began.
+fn is_database_busy(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(rusqlite::Error::sqlite_error_code)
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+            })
+    })
 }
 
 fn search_query_fingerprint(tag: Option<&str>, query: &str) -> String {
@@ -229,6 +286,39 @@ mod tests {
             )
             .unwrap();
         assert!(text.contains("rewritten lighthouse passage"), "{text}");
+    }
+
+    #[test]
+    fn a_search_answers_from_the_documents_as_they_are_while_another_connection_writes() {
+        // The warm-up rebuilds the documents in its own transactions. A
+        // search that cannot sync meanwhile still answers, and syncs once
+        // the index is free.
+        let dir = tempfile::tempdir().unwrap();
+        let index = dir.path().join("index.db");
+        let writer = db::open_or_create(&index).unwrap();
+        index::upsert_block(&writer, &block("alpha"), None).unwrap();
+        let conn = db::open_or_create(&index).unwrap();
+        conn.busy_timeout(std::time::Duration::from_millis(20)).unwrap();
+        let synced_revision = |conn: &Connection| -> Option<i64> {
+            conn.query_row(
+                "SELECT synced_source_revision FROM search_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        index::upsert_block(&writer, &block("beta"), None).unwrap();
+        let busy = read_search_snapshot(&conn, None, "searchable", 5, None).unwrap();
+        assert_eq!(busy.blocks.len(), 1);
+        assert_eq!(busy.blocks[0].slug, "alpha");
+        assert_eq!(synced_revision(&conn), None);
+        writer.execute_batch("COMMIT").unwrap();
+
+        let free = read_search_snapshot(&conn, None, "searchable", 5, None).unwrap();
+        assert_eq!(free.blocks.len(), 2);
+        assert!(synced_revision(&conn).is_some());
     }
 
     #[test]

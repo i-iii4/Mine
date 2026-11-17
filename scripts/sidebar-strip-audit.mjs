@@ -428,8 +428,8 @@ const showFrames = (frames) => JSON.stringify(frames.slice(0, 6).map((frame) => 
 // ─── The move between the List and the table ───────────────────────────────
 
 const MORPH_LEVELS = ["full", "minimal", "off"];
-/** The compact stack's spring settles in 441 ms (channelIcon.ts,
- *  CHANNEL_ICON_SPRING_MS; sidebarListMorph.ts, LIST_MORPH_SETTLE_MS): the
+/** The interface's spring settles in 441 ms (spring.ts, SPRING_MS;
+ *  sidebarListMorph.ts, LIST_MORPH_SETTLE_MS): the
  *  move's clock runs that long from rest; Minimal's move would run 200. */
 const LIST_MORPH_SPRING_MS = 441;
 /** Minimal's move for a command's width (motion.ts, MOTION_SPRING_MOVE_MS). */

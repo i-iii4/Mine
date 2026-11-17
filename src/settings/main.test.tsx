@@ -2,7 +2,9 @@
 // first render, since it cannot rely on the main window for its webview
 // (SPEC_SETTINGS_WINDOW.md, «Appearance»), and renders Settings into #root.
 // No layout variant is written any more (SPEC_DEEP_AUDIT.md, Е8.1).
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
+import { MENU_MODE_STORAGE_KEY } from "@/lib/menuMode";
 import { CARD_RADIUS_STORAGE_KEY } from "@/lib/cardRadius";
 import { DENSITY_STORAGE_KEY } from "@/lib/density";
 import { THEME_STORAGE_KEY } from "@/lib/themeMode";
@@ -30,6 +32,7 @@ it("applies the stored look before the first render and renders Settings into #r
   localStorage.setItem(THEME_STORAGE_KEY, "light");
   localStorage.setItem(CARD_RADIUS_STORAGE_KEY, "4");
   localStorage.setItem(DENSITY_STORAGE_KEY, "24");
+  localStorage.setItem(MENU_MODE_STORAGE_KEY, "window");
 
   await act(async () => {
     await import("./main");
@@ -44,5 +47,8 @@ it("applies the stored look before the first render and renders Settings into #r
   expect(root.style.getPropertyValue("--edge-rhythm")).toBe("24px");
   expect(root.hasAttribute("data-design")).toBe(false);
   expect(localStorage.getItem("mine.design")).toBeNull();
+  // The window is a source of menus for the menu panel (SPEC_MENU_WINDOW.md,
+  // МО22): with the menu mode Window it has the panel made.
+  await waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "menu_panel_prepare")).toBe(true));
   // The entry imports the whole window with its stylesheet; under a full parallel run that alone takes about 5 s.
 }, 30_000);

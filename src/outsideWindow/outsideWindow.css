@@ -1,0 +1,10 @@
+/* The outside window's page (SPEC_OUTSIDE_WINDOW.md, НО1). Nothing but what
+   it shows draws: global.css paints `html`, `body` and `#root` with the
+   theme's background, `#root` by its id, so this names it by its id too, as
+   the menu panel's page does (src/menuPanel/menuPanel.css). */
+html[data-outside-window],
+html[data-outside-window] body,
+html[data-outside-window] #root {
+  background: transparent;
+  overflow: hidden;
+}

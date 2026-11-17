@@ -8,7 +8,7 @@
 // outside. The list below names every registered command once; a test holds
 // it to the handler list and to the commands' bodies.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Webview};
@@ -16,6 +16,7 @@ use tauri::{AppHandle, Manager, Webview};
 use super::space_events;
 use super::spaces::TabRegistry;
 use super::state::{AppState, OpenSpace};
+use crate::storage::feed_changes::{FeedRecording, FeedWrites};
 
 /// What a command does to the space it acts on. The list is held to the
 /// handler list and to the commands' bodies by the tests below.
@@ -66,7 +67,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("get_vault_write_layout", Effect::Reads),
     ("set_vault_write_layout", Effect::AnnouncesItself),
     ("list_grid_blocks", Effect::Reads),
-    ("get_grid_rows", Effect::Reads),
+    ("read_feed_changes", Effect::Reads),
     ("list_graph_snapshot", Effect::Reads),
     ("get_block", Effect::Reads),
     ("list_card_associations", Effect::Reads),
@@ -111,6 +112,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("search_grid_blocks", Effect::Reads),
     ("list_taxonomy_snapshot", Effect::Reads),
     ("create_channel", Effect::ChangesSources),
+    ("create_untitled_channel", Effect::ChangesSources),
     ("reorder_channels", Effect::ChangesSources),
     ("rename_channel", Effect::ChangesSources),
     ("check_collection_name", Effect::Reads),
@@ -164,8 +166,10 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("move_tab_to_new_window", Effect::Reads),
     ("begin_tab_drag", Effect::Reads),
     ("report_drop_slot", Effect::Reads),
-    ("report_card_drag", Effect::Reads),
-    ("drop_cards_on_tab_bar", Effect::Reads),
+    ("begin_card_drag", Effect::Reads),
+    ("update_card_drag", Effect::Reads),
+    ("end_card_drag", Effect::Reads),
+    ("answer_card_tabs", Effect::Reads),
     ("menu_panel_prepare", Effect::Reads),
     ("menu_panel_dispose", Effect::Reads),
     ("menu_panel_ready", Effect::Reads),
@@ -175,6 +179,11 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("menu_panel_close", Effect::Reads),
     ("menu_panel_request", Effect::Reads),
     ("menu_panel_painted", Effect::Reads),
+    ("menu_panel_progress", Effect::Reads),
+    ("outside_window_prepare", Effect::Reads),
+    ("outside_window_open_preview", Effect::Reads),
+    ("outside_window_preview_step", Effect::Reads),
+    ("outside_window_report", Effect::Reads),
 ];
 
 /// The commands that run on the main thread, each with why it may: none of
@@ -232,8 +241,10 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     ("move_tab_to_new_window", "opens a window"),
     ("begin_tab_drag", "follows the pointer with the window"),
     ("report_drop_slot", "tabs in memory, or opens the tabs of dropped cards"),
-    ("report_card_drag", "an event to the window's tab bar"),
-    ("drop_cards_on_tab_bar", "an event to the window's tab bar"),
+    ("begin_card_drag", "watches the mouse, sets the outside window's frame, events to the bars and pages under the pointer"),
+    ("update_card_drag", "sets the outside window's frame, an event to the tab bar under the pointer"),
+    ("end_card_drag", "stops watching the mouse, events to the bar or page under the pointer and to the outside window's page"),
+    ("answer_card_tabs", "an event to the tab bar that took the cards"),
     // TRIAL: the card menu's own window (DESIGN_SYSTEM.md, «Меню карточки в
     // отдельном окне: проба»): AppKit's windows are moved and read on the
     // main thread, and an opening waits for no pool.
@@ -246,6 +257,11 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     ("menu_panel_close", "hides the menu panel and gives the keyboard back"),
     ("menu_panel_request", "an event to the menu's page, hides the menu panel and gives the keyboard back"),
     ("menu_panel_painted", "reads the windows' state for the log"),
+    ("menu_panel_progress", "keeps the menu panel page's last step for the log"),
+    ("outside_window_prepare", "creates the outside window"),
+    ("outside_window_open_preview", "reads the page's place on the screen and sets the outside window's frame"),
+    ("outside_window_preview_step", "reads the page's place on the screen, an event to the outside window's page in the order the main thread sets"),
+    ("outside_window_report", "checks the outside window for clearness, an event to the source page in the order the main thread sets"),
 ];
 
 /// What was renamed by a change, so a tab showing the old name follows it
@@ -291,6 +307,12 @@ impl SpaceRename {
 pub struct VaultChangedPayload {
     pub path: String,
     pub renames: Vec<SpaceRename>,
+    /// `blocks.id` of the cards a command changed, added or removed: a tab
+    /// reads those rows instead of its whole feed. `None` when the cards are
+    /// not known (the watcher, a sync pass, the settings window, a change of
+    /// a collection's page): the tab reads its feed in full
+    /// (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+    pub cards: Option<Vec<i64>>,
 }
 
 impl VaultChangedPayload {
@@ -299,8 +321,20 @@ impl VaultChangedPayload {
         Self {
             path,
             renames: Vec::new(),
+            cards: None,
         }
     }
+}
+
+/// What a command that changes a space answers with: its own answer and the
+/// cards it changed. The calling tab reads those rows instead of its whole
+/// feed (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct Changed<T> {
+    pub value: T,
+    /// `blocks.id` of every card row the command wrote, added or removed.
+    /// `None` when the cards are not known: the feed is read in full.
+    pub cards: Option<Vec<i64>>,
 }
 
 /// The news of a change a tab's command makes, addressed when the command
@@ -313,28 +347,86 @@ pub struct ChangeNews {
     app: AppHandle,
     caller: String,
     space: Option<Arc<OpenSpace>>,
+    /// The index of the space, to ask whose the written links are.
+    index: Option<std::path::PathBuf>,
+    /// The card rows the index writes from here until the news is sent.
+    recording: Mutex<Option<FeedRecording>>,
 }
 
 impl ChangeNews {
-    /// Note the space the tab `webview` shows, before its command runs.
+    /// Note the space the tab `webview` shows, before its command runs, and
+    /// begin hearing which card rows the index writes.
     pub fn before(webview: &Webview) -> Self {
         let app = webview.app_handle().clone();
         let space = app.state::<AppState>().space_for(webview.label());
+        let index = space
+            .as_ref()
+            .and_then(|space| space.layout().ok())
+            .map(|layout| layout.index_db_path());
         Self {
             app,
             caller: webview.label().to_string(),
             space,
+            index,
+            recording: Mutex::new(Some(FeedRecording::start())),
         }
     }
 
     /// The command changed the sources: tell the other tabs of the space it
-    /// changed. The calling tab knows from the command's answer.
+    /// changed, with the cards it changed. The calling tab knows from the
+    /// command's answer.
     pub fn send(&self, renames: Vec<SpaceRename>) {
-        let Some(space) = &self.space else {
-            return;
-        };
+        self.tell(renames);
+    }
+
+    /// [`Self::send`], and the command's answer with the same cards for the
+    /// calling tab.
+    pub fn answer<T>(&self, value: T, renames: Vec<SpaceRename>) -> Changed<T> {
+        Changed {
+            value,
+            cards: self.tell(renames),
+        }
+    }
+
+    /// End the recording, tell the other tabs and return the cards told.
+    fn tell(&self, renames: Vec<SpaceRename>) -> Option<Vec<i64>> {
+        let space = self.space.as_ref()?;
+        let cards = self.written();
         let others = news_recipients(&self.app.state::<AppState>().tabs, space.vault_id(), &self.caller);
-        announce(&self.app, space, others, renames);
+        announce(&self.app, space, others, renames, cards.clone());
+        cards
+    }
+
+    /// The cards written since [`Self::before`]; `None` when they cannot be
+    /// told: a collection's page changed, the news was already sent, or the
+    /// space's index is not there to ask which cards link a new page.
+    fn written(&self) -> Option<Vec<i64>> {
+        let recording = self
+            .recording
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()?;
+        match recording.finish() {
+            FeedWrites::Nothing => Some(Vec::new()),
+            FeedWrites::Unknown => None,
+            FeedWrites::Rows(rows) => {
+                if let Some(cards) = rows.told_by_card_rows() {
+                    return Some(cards);
+                }
+                // Whose the written links are is read through a connection
+                // of its own: the answer never waits for the space's lock,
+                // which background work may hold for seconds.
+                let index = self.index.as_deref()?;
+                let cards = crate::storage::db::open_read_only(index).and_then(|conn| rows.cards(&conn));
+                match cards {
+                    Ok(cards) => cards,
+                    Err(error) => {
+                        log::warn!("the changed cards could not be read, the feed is read in full: {error:#}");
+                        None
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -351,10 +443,16 @@ pub fn news_recipients(tabs: &TabRegistry, vault_id: &str, caller: &str) -> Vec<
 /// of that space.
 pub fn space_changed_in(app: &AppHandle, space: &OpenSpace) {
     let tabs = app.state::<AppState>().tabs.labels_of(space.vault_id());
-    announce(app, space, tabs, Vec::new());
+    announce(app, space, tabs, Vec::new(), None);
 }
 
-fn announce(app: &AppHandle, space: &OpenSpace, labels: Vec<String>, renames: Vec<SpaceRename>) {
+fn announce(
+    app: &AppHandle,
+    space: &OpenSpace,
+    labels: Vec<String>,
+    renames: Vec<SpaceRename>,
+    cards: Option<Vec<i64>>,
+) {
     let Some(root) = space.root() else {
         return;
     };
@@ -365,6 +463,7 @@ fn announce(app: &AppHandle, space: &OpenSpace, labels: Vec<String>, renames: Ve
         VaultChangedPayload {
             path: root.to_string_lossy().into_owned(),
             renames,
+            cards,
         },
     );
 }

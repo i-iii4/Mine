@@ -3,15 +3,15 @@
 // the panel cannot take it.
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { StrictMode, useState } from "react";
-import { CARD_POINT_OPENER, CardHoverMenu, CardPanelPointMenu, startCardMenuPanel } from "./CardHoverMenu";
+import { StrictMode, createRef } from "react";
+import { CardConnectMenu, CardHoverMenu, CardPointMenuHost, type CardPointMenuHandle } from "./CardHoverMenu";
 import { getBlock } from "@/lib/commands";
 import { MENU_MODE_STORAGE_KEY } from "@/lib/menuMode";
 import { MENU_PANEL_TO_SOURCE_EVENT } from "@/lib/menuPanelProtocol";
 import type { MenuPanelToSource, MenuSpec } from "@/types";
-import type { MenuPanelSession } from "@/lib/menuPanelSource";
 import { resetMenuPanelSourceForTests } from "@/lib/menuPanelSource";
 import { indexedBlock, lightBlock } from "@/test/blocks";
 
@@ -86,12 +86,12 @@ describe("the feed card's menu with the menu mode Window", () => {
   it("asks for the panel in the press's own handler, with the page menu's rows, nothing on the page", async () => {
     panelTakes();
     renderCard();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     // Before React has run an effect: the request left with the press.
     expect(opens()).toHaveLength(1);
     expect(screen.queryByText("Copy Path")).toBeNull();
     const spec = openedSpec();
-    expect((opens()[0]?.[1] as { request: { opener: unknown } }).request.opener).toEqual({ kind: "plate", align: "end" });
+    expect((opens()[0]?.[1] as { request: { opener: unknown } }).request.opener).toEqual({ kind: "plate" });
     expect(spec?.entries.map((entry) => (entry.kind === "item" ? entry.label : entry.kind))).toEqual([
       "submenu",
       "separator",
@@ -111,14 +111,14 @@ describe("the feed card's menu with the menu mode Window", () => {
     panelTakes();
     const onRequestRename = vi.fn();
     renderCard({ onRequestRename });
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     await waitFor(() => expect(opens()).toHaveLength(1));
     // The page's first menu: the choice, then the closing it brought.
     toSource(1, 1, { kind: "action", request: 1, action: { kind: "run", id: "rename" } });
     await waitFor(() => expect(onRequestRename).toHaveBeenCalledWith(block));
     toSource(1, 2, { kind: "closed", reason: "chosen", key_returned: true });
     // Closed: the next press opens it again, the page's second menu.
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     await waitFor(() => expect(opens()).toHaveLength(2));
     expect((opens()[1]?.[1] as { request: { menu: number } }).request.menu).toBe(2);
   });
@@ -139,7 +139,7 @@ describe("the feed card's menu with the menu mode Window", () => {
         />
       </StrictMode>,
     );
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     await waitFor(() => expect(opens()).toHaveLength(1));
     // The button owns the menu: nothing closed it while it stood.
     expect(invokes("menu_panel_close")).toEqual([]);
@@ -199,14 +199,14 @@ describe("the feed card's menu with the menu mode Window", () => {
   it("opens on the page when the panel refuses it", async () => {
     vi.mocked(invoke).mockRejectedValue({ kind: "not_ready" });
     renderCard();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     expect(await screen.findByText("Copy Path")).toBeTruthy();
   });
 
   it("opens on the page with the menu mode Web", async () => {
     window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
     renderCard();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     expect(await screen.findByText("Copy Path")).toBeTruthy();
     expect(opens()).toHaveLength(0);
   });
@@ -215,45 +215,61 @@ describe("the feed card's menu with the menu mode Window", () => {
     panelTakes();
     vi.mocked(getBlock).mockResolvedValue(indexedBlock({ slug: "alpha-block", tags: ["Web", "Read"] }));
     renderCard();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
     await waitFor(() => expect(invokes("menu_panel_update")).not.toEqual([]));
     const [update] = invokes("menu_panel_update") as [{ menu: number; number: number; spec: MenuSpec }];
     expect([update.menu, update.number]).toEqual([1, 1]);
     const connect = update.spec.entries[0];
     const picker = connect?.kind === "submenu" ? connect.content.entries[0] : undefined;
-    expect(picker?.kind === "widget" && picker.widget.selected).toEqual(["Web", "Read"]);
+    expect(picker?.kind === "widget" && picker.widget.kind === "collection_picker" && picker.widget.selected).toEqual(["Web", "Read"]);
+  });
+});
+
+describe("the card menu at a point: the feed's right click, the graph and the sidebar's thumbnails", () => {
+  function renderHost(onOpenChange = vi.fn()) {
+    const handle = createRef<CardPointMenuHandle>();
+    const onRequestRename = vi.fn();
+    const view = render(
+      <StrictMode>
+        <CardPointMenuHost
+          handleRef={handle}
+          vaultPath="/vault"
+          tags={[{ tag: "Web", count: 1 }]}
+          currentTag="Web"
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={onRequestRename}
+          onRequestDelete={vi.fn()}
+          onOpenChange={onOpenChange}
+        />
+      </StrictMode>,
+    );
+    return { handle, onOpenChange, onRequestRename, ...view };
+  }
+
+  it("asks the panel the moment it is opened, at the point, and runs a choice with the card's handlers", async () => {
+    panelTakes();
+    const { handle, onOpenChange, onRequestRename } = renderHost();
+    // Mounted with no menu: StrictMode's trial run of the mount closed nothing.
+    expect(invokes("menu_panel_close")).toEqual([]);
+    act(() => handle.current?.open(block, { x: 300, y: 200 }));
+    const args = opens()[0]?.[1] as { request: { anchor: unknown; opener: unknown; menu: number } } | undefined;
+    expect(args?.request).toMatchObject({ menu: 1, anchor: { x: 300, y: 200, width: 0, height: 0 }, opener: { kind: "point" } });
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    // In the panel: nothing on the page.
+    await waitFor(() => expect(invokes("menu_panel_open")).toHaveLength(1));
+    expect(screen.queryByText("Copy Path")).toBeNull();
+    toSource(1, 1, { kind: "action", request: 1, action: { kind: "run", id: "rename" } });
+    await waitFor(() => expect(onRequestRename).toHaveBeenCalledWith(block));
+    toSource(1, 2, { kind: "closed", reason: "chosen", key_returned: true });
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(invokes("menu_panel_close")).toEqual([]);
   });
 
-  it("opens a right click's menu at the point, and the page's point menu when refused", async () => {
+  it("opens on the page at the point when the panel refuses it, and when the menu mode is Web", async () => {
     vi.mocked(invoke).mockRejectedValue({ kind: "app_inactive" });
-    const actions = {
-      block,
-      vaultPath: "/vault",
-      tags: [],
-      currentTag: undefined,
-      onToggleTag: vi.fn(),
-      onCreateAndAssign: vi.fn(),
-      onRequestRename: vi.fn(),
-      onRequestDelete: vi.fn(),
-    };
-    function Feed() {
-      const [menu] = useState(() => {
-        const state: { session: MenuPanelSession | null; onPage: boolean; refused: () => void } = { session: null, onPage: false, refused: () => undefined };
-        state.session = startCardMenuPanel(
-          () => ({ ...actions, checkName: undefined }),
-          { anchor: { x: 300, y: 200, width: 0, height: 0 }, opener: CARD_POINT_OPENER, byKey: false, eventAt: 1, contextMenu: true },
-          { onClosed: () => undefined, onRefused: () => state.refused() },
-        );
-        return state;
-      });
-      const [onPage, setOnPage] = useState(false);
-      menu.refused = () => setOnPage(true);
-      return menu.session && <CardPanelPointMenu {...actions} session={menu.session} onPage={onPage} x={300} y={200} onClose={vi.fn()} />;
-    }
-    render(<Feed />);
-    const args = opens()[0]?.[1] as { request: { anchor: unknown; opener: unknown } } | undefined;
-    expect(args?.request.anchor).toEqual({ x: 300, y: 200, width: 0, height: 0 });
-    expect(args?.request.opener).toEqual({ kind: "point" });
+    const { handle, onOpenChange } = renderHost();
+    act(() => handle.current?.open(block, { x: 300, y: 200 }));
     expect(await screen.findByText("Copy Path")).toBeTruthy();
     // On the page the menu stands as in the panel: right of the point, its
     // top on it, its corner on the point with no offset (МО10, МО69).
@@ -262,34 +278,103 @@ describe("the feed card's menu with the menu mode Window", () => {
     const anchor = document.querySelector<HTMLElement>("[data-card-point-menu-anchor]");
     expect([anchor?.style.left, anchor?.style.top]).toEqual(["300px", "200px"]);
     expect(anchor?.className).toContain("size-0");
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    // The owner takes it away.
+    act(() => handle.current?.close());
+    await waitFor(() => expect(screen.queryByText("Copy Path")).toBeNull());
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    vi.mocked(invoke).mockClear();
+    act(() => handle.current?.open(block, { x: 40, y: 50 }));
+    expect(await screen.findByText("Copy Path")).toBeTruthy();
+    expect(opens()).toHaveLength(0);
   });
 
-  it("the component that follows a right click's menu never closes it: the feed owns it", async () => {
-    panelTakes();
-    const session: MenuPanelSession = { update: vi.fn(), close: vi.fn() };
-    const { unmount } = render(
-      <StrictMode>
-        <CardPanelPointMenu
-          block={block}
+  // DESIGN_SYSTEM.md, «Открытое меню»: the first press outside a menu only
+  // closes it. The page's menu goes with its surface at once, and the press
+  // is still held to its end.
+  it("closes on a press outside on the page without acting there", async () => {
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    const handle = createRef<CardPointMenuHandle>();
+    render(
+      <>
+        <button type="button" onClick={onClick}>Under the menu</button>
+        <CardPointMenuHost
+          handleRef={handle}
           vaultPath="/vault"
           tags={[]}
-          currentTag={undefined}
           onToggleTag={vi.fn()}
           onCreateAndAssign={vi.fn()}
           onRequestRename={vi.fn()}
           onRequestDelete={vi.fn()}
-          session={session}
-          onPage={false}
-          x={300}
-          y={200}
-          onClose={vi.fn()}
         />
-      </StrictMode>,
+      </>,
     );
-    // StrictMode ran its effects' cleanups on mount (the trial's defect:
-    // the menu closed the moment it opened in the debug build).
-    expect(session.close).not.toHaveBeenCalled();
+    act(() => handle.current?.open(block, { x: 300, y: 200 }));
+    expect(await screen.findByText("Copy Path")).toBeTruthy();
+    await user.click(screen.getByText("Under the menu"));
+    await waitFor(() => expect(screen.queryByText("Copy Path")).toBeNull());
+    expect(onClick).not.toHaveBeenCalled();
+    // The next press is the page's own.
+    await user.click(screen.getByText("Under the menu"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes its menu in the panel when it is taken away, and when it unmounts", async () => {
+    panelTakes();
+    const { handle, unmount } = renderHost();
+    act(() => handle.current?.open(block, { x: 300, y: 200 }));
+    await waitFor(() => expect(opens()).toHaveLength(1));
+    act(() => handle.current?.close());
+    expect(invokes("menu_panel_close")).toEqual([expect.objectContaining({ menu: 1, reason: "source" })]);
+    act(() => handle.current?.open(block, { x: 300, y: 200 }));
+    await waitFor(() => expect(opens()).toHaveLength(2));
     unmount();
-    expect(session.close).not.toHaveBeenCalled();
+    expect(invokes("menu_panel_close")).toEqual([
+      expect.objectContaining({ menu: 1, reason: "source" }),
+      expect.objectContaining({ menu: 2, reason: "source" }),
+    ]);
+  });
+});
+
+describe("Connect of the open card: the picker off a button of its own", () => {
+  function renderConnect() {
+    return render(
+      <CardConnectMenu
+        block={block}
+        tags={[{ tag: "Web", count: 1 }]}
+        currentTag="Web"
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+      >
+        <button type="button">Connect to</button>
+      </CardConnectMenu>,
+    );
+  }
+
+  it("asks the panel for the picker off the button given, which looks open meanwhile", async () => {
+    panelTakes();
+    renderConnect();
+    const button = screen.getByRole("button", { name: "Connect to" });
+    fireEvent.pointerDown(button, { button: 0, ctrlKey: false });
+    expect(opens()).toHaveLength(1);
+    expect(openedSpec()?.role).toBe("search");
+    expect((opens()[0]?.[1] as { request: { opener: unknown } }).request.opener).toEqual({ kind: "plate" });
+    await waitFor(() => expect(button.getAttribute("data-state")).toBe("open"));
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByPlaceholderText("Search collections...")).toBeNull();
+    toSource(1, 1, { kind: "closed", reason: "escape", key_returned: true });
+    await waitFor(() => expect(button.getAttribute("data-state")).toBe("closed"));
+  });
+
+  it("opens the picker on the page with the menu mode Web", async () => {
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    renderConnect();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Connect to" }), { button: 0, ctrlKey: false });
+    expect(await screen.findByPlaceholderText("Search collections...")).toBeTruthy();
+    expect(opens()).toHaveLength(0);
   });
 });

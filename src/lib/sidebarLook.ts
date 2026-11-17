@@ -1,10 +1,10 @@
 // The sidebar rows' look: compact below the threshold of their list's width
-// (`sidebarCompactRowsBelowPx`, the List or, postponed, the narrow table),
-// the table above it (user's decision of 01.11.2026; DESIGN_SYSTEM.md,
-// «Переход между List и таблицей»). The look is an attribute of the list's
-// scrollport and of the lifted copy of a row, which the stylesheet keys its
-// compact rules on (global.css, «Compact rows», «List sidebar»), not a
-// container query: the scrollport keeps the table while its rows move to
+// (`sidebarCompactRowsBelowPx`, the List), the table above it (user's
+// decision of 01.11.2026; DESIGN_SYSTEM.md, «Переход между List и
+// таблицей»). The look is an attribute of the list's scrollport and of the
+// lifted copy of a row, which the stylesheet keys its compact rules on
+// (global.css, «List sidebar»), not a container query: the scrollport keeps
+// the table while its rows move to
 // the List without restyling the list, and its rows' styles do not follow
 // its width in every frame of a drag. The scrollport's look is set by
 // sidebarListMorph.ts, which decides when it changes; the copy's follows

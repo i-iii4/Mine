@@ -2,15 +2,6 @@ import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -497,23 +488,6 @@ describe("Escape in the picker inside a menu", () => {
     );
   }
 
-  /** The card's context menu: Connect a submenu with no close of its own
-   *  (CardContextMenu). */
-  function ContextSubMenu() {
-    return (
-      <ContextMenu>
-        <ContextMenuTrigger>Card</ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem>Rename</ContextMenuItem>
-          <ContextMenuSub open>
-            <ContextMenuSubTrigger>Connect</ContextMenuSubTrigger>
-            <ContextMenuSubContent>{picker("one")}</ContextMenuSubContent>
-          </ContextMenuSub>
-        </ContextMenuContent>
-      </ContextMenu>
-    );
-  }
-
   const menus = () => document.querySelectorAll("[role='menu']").length;
   const field = () => screen.getByRole("textbox") as HTMLInputElement;
   const pickerShown = () => document.querySelector("[data-collection-picker]") !== null;
@@ -566,18 +540,4 @@ describe("Escape in the picker inside a menu", () => {
       expect(menus()).toBe(1);
     });
   }
-
-  it("in the context menu the first Escape clears the query, the next closes the menu, as Radix does with no query", async () => {
-    render(<ContextSubMenu />);
-    const card = screen.getByText("Card");
-    fireEvent.pointerDown(card, { button: 2 });
-    fireEvent.contextMenu(card);
-    await screen.findByRole("textbox");
-    type("des");
-    fireEvent.keyDown(field(), { key: "Escape" });
-    expect(field().value).toBe("");
-    expect(menus()).toBe(2);
-    fireEvent.keyDown(field(), { key: "Escape" });
-    await waitFor(() => expect(menus()).toBe(0));
-  });
 });

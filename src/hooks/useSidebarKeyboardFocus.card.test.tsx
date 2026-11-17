@@ -1,4 +1,4 @@
-import { createRef, useEffect, useRef, useState } from "react";
+import { createRef, useEffect, useRef, useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
@@ -6,12 +6,8 @@ import { EditorView } from "@codemirror/view";
 import { CardPeek, type CardPeekOpening } from "@/components/CardPeek";
 import { Detail } from "@/components/Detail";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { SpecPointMenu, type SpecPointMenuHandle } from "@/components/SpecPointMenu";
+import { menuItem } from "@/lib/menuSpec";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { beginNoteEdit, noteBodyState, resolveNoteLink } from "@/lib/commands";
 import { sidebarRowDomId } from "@/lib/sidebarSearch";
@@ -22,6 +18,33 @@ import {
   type FeedKeyboardFocus,
   type SidebarKeyboardFocus,
 } from "./useSidebarKeyboardFocus";
+
+/** A row with the menu a right click opens on it, as the sidebar's row has:
+ *  a dropdown off the point of the click (SPEC_MENU_WINDOW.md, МО68). */
+function RowWithMenu({ rowKey, onRename, children }: { rowKey: string; onRename?: () => void; children: ReactNode }) {
+  const menu = useRef<SpecPointMenuHandle>(null);
+  return (
+    <>
+      <div
+        id={sidebarRowDomId(rowKey)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          menu.current?.open({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        {children}
+      </div>
+      <SpecPointMenu
+        handleRef={menu}
+        spec={{ role: "action", entries: [menuItem("rename", `Rename ${rowKey}`)] }}
+        act={async () => {
+          onRename?.();
+          return { kind: "done" };
+        }}
+      />
+    </>
+  );
+}
 
 // The real open card, with CodeMirror and a table cell's editor, beside the focus
 // owner (SPEC_KEYBOARD.md, М9).
@@ -115,23 +138,16 @@ function Page({ currentRowKey, sidebarHidden, cardOpen, sizedBy, feed, onOpen, o
         )}
         <nav data-sidebar-scroll="">
           {ROWS.map((rowKey) => (
-            <ContextMenu key={rowKey}>
-              <ContextMenuTrigger asChild>
-                <div id={sidebarRowDomId(rowKey)}>
-                  <a data-sidebar-row-body="" href="#row" onClick={(event) => { event.preventDefault(); onOpen(rowKey); }}>
-                    <span data-sidebar-name-text="">{rowKey}</span>
-                  </a>
-                  {rowKey !== "all" && (
-                    <button type="button" data-sidebar-link-action="" onClick={() => setLinked(rowKey, !linked.has(rowKey))}>
-                      {linked.has(rowKey) ? `Disconnect ${rowKey}` : `Connect ${rowKey}`}
-                    </button>
-                  )}
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                <ContextMenuItem>{`Rename ${rowKey}`}</ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
+            <RowWithMenu key={rowKey} rowKey={rowKey}>
+              <a data-sidebar-row-body="" href="#row" onClick={(event) => { event.preventDefault(); onOpen(rowKey); }}>
+                <span data-sidebar-name-text="">{rowKey}</span>
+              </a>
+              {rowKey !== "all" && (
+                <button type="button" data-sidebar-link-action="" onClick={() => setLinked(rowKey, !linked.has(rowKey))}>
+                  {linked.has(rowKey) ? `Disconnect ${rowKey}` : `Connect ${rowKey}`}
+                </button>
+              )}
+            </RowWithMenu>
           ))}
         </nav>
         <NoteEditingSwitch.Provider value={true}>

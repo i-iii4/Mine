@@ -1,5 +1,7 @@
-// The tab's right-click menu (SPEC_TABS.md, В50). It is native: the bar page
-// is one row tall and would clip a menu drawn inside it (В6).
+// The tab's right-click menu as the system's own (SPEC_TABS.md, В50): what
+// the bar shows when the menu panel takes no menu (SPEC_MENU_WINDOW.md,
+// МО68а; barMenus.ts holds the same rows for the panel). The bar page is one
+// row tall and would clip a menu drawn inside it (В6).
 //
 // One menu serves the whole bar. Its items act on the tab it was last opened
 // for, so a right click never creates native menu resources that nothing
@@ -7,12 +9,21 @@
 
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import type { TabId } from "@/types";
+import {
+  CLOSE_OTHER_TABS_LABEL,
+  CLOSE_TAB_LABEL,
+  CLOSE_TABS_TO_THE_LEFT_LABEL,
+  CLOSE_TABS_TO_THE_RIGHT_LABEL,
+  MOVE_TAB_TO_NEW_WINDOW_LABEL,
+} from "./barMenus";
 
-export const MOVE_TAB_TO_NEW_WINDOW_LABEL = "Move Tab to New Window";
-export const CLOSE_TAB_LABEL = "Close Tab";
-export const CLOSE_OTHER_TABS_LABEL = "Close Other Tabs";
-export const CLOSE_TABS_TO_THE_LEFT_LABEL = "Close Tabs to the Left";
-export const CLOSE_TABS_TO_THE_RIGHT_LABEL = "Close Tabs to the Right";
+export {
+  CLOSE_OTHER_TABS_LABEL,
+  CLOSE_TAB_LABEL,
+  CLOSE_TABS_TO_THE_LEFT_LABEL,
+  CLOSE_TABS_TO_THE_RIGHT_LABEL,
+  MOVE_TAB_TO_NEW_WINDOW_LABEL,
+};
 
 /** What the menu's items do to the tab it was opened for. */
 export interface TabMenuActions {

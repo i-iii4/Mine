@@ -114,11 +114,11 @@ export function AppearanceSection() {
       </SettingRow>
 
       <SettingRow
-        label="Card corners"
-        caption="Corner radius of cards and their images, in pixels"
+        label="Element corners"
+        caption="Corner radius of elements and their images, in pixels"
       >
         <Tabs value={String(cardRadius)} onValueChange={handleCardRadiusChange} className="gap-0">
-          <TabsList variant="chrome" size="panel" aria-label="Card corners">
+          <TabsList variant="chrome" size="panel" aria-label="Element corners">
             {CARD_RADIUS_CONTROL_OPTIONS.map((option) => (
               <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
             ))}

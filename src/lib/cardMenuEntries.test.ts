@@ -16,11 +16,11 @@ const PICKER: CardMenuPicker = { card: "card", selected: ["Web"], tags: [{ tag: 
 
 /** The ids of a menu's rows, a separator as its kind. */
 function rows(spec: MenuSpec): string[] {
-  return spec.entries.map((entry) => (entry.kind === "separator" ? "separator" : entry.id));
+  return spec.entries.map((entry) => ("id" in entry ? entry.id : entry.kind));
 }
 
 function entry(spec: MenuSpec, id: string): MenuEntry | undefined {
-  return spec.entries.find((candidate) => candidate.kind !== "separator" && candidate.id === id);
+  return spec.entries.find((candidate) => "id" in candidate && candidate.id === id);
 }
 
 describe("cardMenuSpec", () => {
@@ -59,15 +59,15 @@ describe("cardMenuSpec", () => {
     expect(table).toMatchObject({ kind: "submenu", label: "Table", content: { role: "action" } });
     // A command's own id inside the table's, its separator before it.
     expect(table?.kind === "submenu" && table.content.entries).toEqual([
-      { kind: "item", id: "table:row-above", label: "Add Row Above", icon: null, variant: "default", truncate: false },
+      { kind: "item", id: "table:row-above", label: "Add Row Above", icon: null, variant: "default", truncate: false, disabled: false, stays_open: false, plain: false, detail: null },
       { kind: "separator" },
-      { kind: "item", id: "table:delete-table", label: "Delete Table", icon: null, variant: "destructive", truncate: false },
+      { kind: "item", id: "table:delete-table", label: "Delete Table", icon: null, variant: "destructive", truncate: false, disabled: false, stays_open: false, plain: false, detail: null },
     ]);
   });
 
   it("names the collection Disconnect leaves, and marks what detaches and what deletes", () => {
     const spec = cardMenuSpec({ hasUrl: true, disconnectFrom: "Web", tableCommands: [], picker: PICKER });
-    expect(entry(spec, "disconnect")).toMatchObject({ label: "Disconnect from “Web”", icon: "unlink", variant: "detach", truncate: true });
+    expect(entry(spec, "disconnect")).toMatchObject({ label: "Disconnect from “Web”", icon: "unlink", variant: "detach", truncate: true, disabled: false, stays_open: false, plain: false, detail: null });
     expect(entry(spec, "delete")).toMatchObject({ icon: "trash", variant: "destructive" });
     expect(entry(spec, "source")).toMatchObject({ icon: "external", variant: "default" });
   });
@@ -79,6 +79,7 @@ describe("cardMenuSpec", () => {
       id: CARD_MENU_CONNECT_ID,
       label: "Connect",
       icon: "plus",
+      plain: false,
       content: cardConnectSpec(PICKER),
     });
     // Connect alone, the card's plus: the picker is the whole menu, a list
@@ -109,7 +110,7 @@ describe("cardMenuSpec", () => {
     const ids: string[] = [];
     const collect = (entries: readonly MenuEntry[]) => {
       for (const candidate of entries) {
-        if (candidate.kind === "separator") continue;
+        if (!("id" in candidate)) continue;
         ids.push(candidate.id);
         if (candidate.kind === "submenu") collect(candidate.content.entries);
       }

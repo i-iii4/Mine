@@ -53,7 +53,7 @@ describe("LayoutSection", () => {
     render(<LayoutSection />);
 
     // The first open space by default.
-    expect(await screen.findByLabelText("Cards")).toHaveValue("Cards");
+    expect(await screen.findByLabelText("Elements")).toHaveValue("Cards");
     expect(getMock).toHaveBeenCalledWith(MINE);
 
     const trigger = screen.getByRole("button", { name: "Space: Mine" });
@@ -61,7 +61,7 @@ describe("LayoutSection", () => {
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Archive" }));
 
-    await waitFor(() => expect(screen.getByLabelText("Cards")).toHaveValue(""));
+    await waitFor(() => expect(screen.getByLabelText("Elements")).toHaveValue(""));
     expect(getMock).toHaveBeenLastCalledWith(ARCHIVE);
     expect(screen.getByRole("button", { name: "Space: Archive" })).toBeInTheDocument();
 
@@ -77,7 +77,7 @@ describe("LayoutSection", () => {
     getMock.mockResolvedValue(STANDARD);
     render(<LayoutSection />);
 
-    expect(await screen.findByLabelText("Cards")).toHaveValue("Cards");
+    expect(await screen.findByLabelText("Elements")).toHaveValue("Cards");
     expect(screen.getByLabelText("Media")).toHaveValue("Media");
     expect(screen.getByLabelText("Collections")).toHaveValue("Collections");
   });
@@ -123,15 +123,15 @@ describe("LayoutSection", () => {
 
   it("surfaces a rejected folder and keeps the saved value", async () => {
     getMock.mockResolvedValue(STANDARD);
-    setMock.mockRejectedValue(new Error("write folder must stay inside the vault: ../outside"));
+    setMock.mockRejectedValue(new Error("write folder must stay inside the space: ../outside"));
     const user = userEvent.setup();
     render(<LayoutSection />);
 
-    const cards = await screen.findByLabelText("Cards");
+    const cards = await screen.findByLabelText("Elements");
     await user.clear(cards);
     await user.type(cards, "../outside");
     await user.tab();
 
-    expect(await screen.findByText(/must stay inside the vault/)).toBeInTheDocument();
+    expect(await screen.findByText(/must stay inside the space/)).toBeInTheDocument();
   });
 });

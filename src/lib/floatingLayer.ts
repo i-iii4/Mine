@@ -30,9 +30,33 @@ export type MenuAnchor = "plate" | "point";
 
 export type MenuSide = "top" | "right" | "bottom" | "left";
 
-/** A menu stands flush with one edge of its button's plate: the start edge
- *  for a button on the left, the end edge for a button at the right. */
+/** The edge of its button's plate a menu stands flush with: the start, its
+ *  left edge on the plate's left, or the end, its right edge on the
+ *  plate's right (`plateMenuAlign`). */
 export type MenuAlign = "start" | "end";
+
+/** A horizontal span: a plate's, or the bound a menu stays inside. */
+export interface Span {
+  left: number;
+  right: number;
+}
+
+/**
+ * The edge of its plate a button's menu `width` wide stands flush with
+ * (user's decision of 16.11.2026; SPEC_MENU_WINDOW.md, МО7): the start, so
+ * it opens right; the end, its right edge on the plate's right, where the
+ * bound's right edge leaves no room and its left edge does; with room on
+ * neither side the start, and the layer shifts the menu inside the bound,
+ * no farther than its plate (МО8). One rule for every button: the place
+ * that opens a menu names no edge. The menu panel's backend lays out its
+ * menus by the same rule (src-tauri/src/menu_panel/geometry.rs,
+ * `plate_align`).
+ */
+export function plateMenuAlign(plate: Span, width: number, bound: Span): MenuAlign {
+  if (plate.left + width <= bound.right) return "start";
+  if (plate.right - width >= bound.left) return "end";
+  return "start";
+}
 
 export interface MenuPlateOffsets {
   sideOffset: number;

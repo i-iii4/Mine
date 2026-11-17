@@ -523,7 +523,7 @@ impl SourceVideoDownloads {
         source_url: &str,
     ) -> Result<(), String> {
         let source = mine_core::domain::video_source::parse_youtube_source(source_url)
-            .ok_or_else(|| "The card has no supported source video.".to_owned())?;
+            .ok_or_else(|| "The element has no supported source video.".to_owned())?;
         let Some(job) = self.register(&vault, &slug, &source.video_id)? else {
             return Ok(());
         };
@@ -742,7 +742,7 @@ fn deliver_finished(
         }
         Err(Phase::Quitting) => {
             keep_download(&job.vault, &job.slug(), job.key(), &job.video_id, finished)?;
-            Err("Mine quit before the video went into the card; it is kept and will be added at the next launch.".to_owned())
+            Err("Mine quit before the video went into the element; it is kept and will be added at the next launch.".to_owned())
         }
         Err(_) => Err(STOPPED.to_owned()),
     }
@@ -1542,7 +1542,7 @@ mod tests {
         let vault = space_in(dir.path());
         let finished = finished_video(dir.path(), "joined.mp4");
         let outcome = deliver_download(&vault, "Cards/Film", None, "9KDDhAOyv9k", &finished, |_| {
-            Err(MediaAssetActionError::Internal { message: "the card of this download was not found".into() })
+            Err(MediaAssetActionError::Internal { message: "the element of this download was not found".into() })
         });
         assert_eq!(outcome, Ok(Delivered::Kept));
         assert_eq!(final_state(&outcome, Phase::Delivering), DownloadState::Kept);
@@ -1649,7 +1649,7 @@ mod tests {
         for passing in [
             "database is locked",
             "'Cards/Film.md' changed outside Mine; nothing was written",
-            "the card of this download was not found",
+            "the element of this download was not found",
         ] {
             settle_kept_download(&vault, &kept, &Err(MediaAssetActionError::Internal { message: passing.into() }));
             assert_eq!(kept_downloads(&vault), vec![kept.clone()], "{passing}");
@@ -1659,7 +1659,7 @@ mod tests {
         settle_kept_download(
             &vault,
             &kept,
-            &Err(MediaAssetActionError::InvalidMediaRef { reason: "the card no longer links to this video".into() }),
+            &Err(MediaAssetActionError::InvalidMediaRef { reason: "the element no longer links to this video".into() }),
         );
         assert!(kept_downloads(&vault).is_empty());
         assert!(!file.exists());

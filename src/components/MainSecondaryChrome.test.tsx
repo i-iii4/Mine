@@ -286,8 +286,8 @@ describe("MainSecondaryTopBar", () => {
     const menu = document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]")!;
     const group = menu.querySelector<HTMLElement>("[data-chrome-actions]")!;
     const buttons = within(group).getAllByRole("button");
-    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Card actions", "Collapse to window", "Close"]);
-    const actions = within(group).getByRole("button", { name: "Card actions" });
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Element actions", "Collapse to window", "Close"]);
+    const actions = within(group).getByRole("button", { name: "Element actions" });
     const collapse = within(group).getByRole("button", { name: "Collapse to window" });
     const close = within(group).getByRole("button", { name: "Close" });
     expect(collapse.getAttribute("data-variant")).toBe(close.getAttribute("data-variant"));
@@ -298,7 +298,7 @@ describe("MainSecondaryTopBar", () => {
     // Not offered (Full page, or a right part too narrow for the window): absent.
     rerender(bar(BLOCK));
     expect(screen.queryByRole("button", { name: "Collapse to window" })).toBeNull();
-    expect(within(group).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Card actions", "Close"]);
+    expect(within(group).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Element actions", "Close"]);
   });
 
   it("brings no collections switch with an open card", () => {

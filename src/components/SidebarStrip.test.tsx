@@ -273,18 +273,6 @@ describe("the sidebar's thumbnail strip (SPEC_SIDEBAR_STRIP.md)", () => {
     setSidebarStripWidth(88);
     expect(strip.querySelectorAll("[data-sidebar-strip-track] > *")).toHaveLength(3);
   });
-
-  it("stacks the list's first three cards in the compact item, whatever the strip's width", async () => {
-    const art = slugs("art", 10);
-    await renderRead({ __all__: art, Art: art }, [tag("Art", 10)], 10);
-    const stackCards = () =>
-      document.querySelectorAll('[data-sidebar-row-key="tag:Art"] [data-sidebar-stack-card="trigger"]').length;
-    expect(stackCards()).toBe(3);
-    setSidebarStripWidth(1893);
-    expect(stackCards()).toBe(3);
-    setSidebarStripWidth(0);
-    expect(stackCards()).toBe(3);
-  });
 });
 
 describe("the strip's pictures (SPEC_SIDEBAR_STRIP.md, ЛМ4)", () => {

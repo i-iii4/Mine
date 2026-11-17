@@ -78,8 +78,7 @@ function readAvailableHeight(element: HTMLElement): number | null {
   const style = window.getComputedStyle(element);
   return (
     readPxVariable(style, "--floating-menu-available-height") ??
-    readPxVariable(style, "--radix-dropdown-menu-content-available-height") ??
-    readPxVariable(style, "--radix-context-menu-content-available-height")
+    readPxVariable(style, "--radix-dropdown-menu-content-available-height")
   );
 }
 

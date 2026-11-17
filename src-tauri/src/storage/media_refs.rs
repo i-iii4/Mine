@@ -5,6 +5,7 @@
 
 use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 #[error("ambiguous media reference: {0}")]
@@ -31,7 +32,7 @@ use crate::domain::vault::VaultLayout;
 /// creates a resolver for a pass states, at that point, why that is safe.
 pub struct MediaResolver<'a> {
     vault: &'a VaultLayout,
-    link_index: Option<LinkIndex>,
+    link_index: Option<Arc<LinkIndex>>,
 }
 
 impl<'a> MediaResolver<'a> {
@@ -39,6 +40,19 @@ impl<'a> MediaResolver<'a> {
         Self {
             vault,
             link_index: None,
+        }
+    }
+
+    /// A resolver over a path index the caller already holds: it never walks
+    /// the vault. `index` must hold every file of `vault` that
+    /// [`list_files`] lists, as they are now; whoever passes it states why
+    /// it does (the pass over a space lists the files itself,
+    /// `reconcile::keep_files`). It answers every lookup as a resolver that
+    /// walked would.
+    pub fn with_link_index(vault: &'a VaultLayout, index: Arc<LinkIndex>) -> Self {
+        Self {
+            vault,
+            link_index: Some(index),
         }
     }
 
@@ -161,7 +175,7 @@ impl<'a> MediaResolver<'a> {
     /// The vault's path index, built from one walk on first use.
     pub fn link_index(&mut self) -> &LinkIndex {
         self.link_index
-            .get_or_insert_with(|| build_link_index(self.vault.root()))
+            .get_or_insert_with(|| Arc::new(build_link_index(self.vault.root())))
     }
 
     /// Destructive actions may resolve a short name only when it is unique.
@@ -327,9 +341,17 @@ pub(crate) fn link_index_builds() -> usize {
 pub fn build_link_index(root: &Path) -> LinkIndex {
     #[cfg(test)]
     LINK_INDEX_BUILDS.with(|builds| builds.set(builds.get() + 1));
+    LinkIndex::new(list_files(root))
+}
+
+/// Every file under `root` by its path from `root`: the list
+/// [`build_link_index`] indexes. Folders no note looks into are skipped
+/// (hidden ones, `node_modules`, `target`, `__pycache__`), and a folder that
+/// cannot be listed is skipped too.
+pub fn list_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     collect_all_files(root, root, &mut files);
-    LinkIndex::new(files)
+    files
 }
 
 fn collect_all_files(root: &Path, dir: &Path, files: &mut Vec<String>) {
@@ -764,6 +786,97 @@ mod tests {
         assert_eq!(resolver.resolve_indexed_media("Cards/Note", "clip.png"), Some(clip));
         assert_eq!(resolver.resolve_collection_document("Каталоги"), Some(collection));
         assert_eq!(link_index_builds() - before, 1, "one walk serves every lookup");
+    }
+
+    /// A resolver over an index made of [`list_files`] answers every kind
+    /// of lookup as a resolver that walked the vault itself, the ambiguous
+    /// and the missing ones included, and never walks.
+    #[test]
+    fn a_resolver_over_a_ready_index_answers_as_one_that_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        for file in [
+            "Cards/Note.md",
+            "Cards/Sub/Deep.md",
+            "Collections/Каталоги.md",
+            "Media/photo.jpg",
+            "Media/twice.png",
+            "Other/twice.png",
+            "Cards/beside.png",
+            "Media/Sub/nested clip.mp4",
+            ".obsidian/hidden.png",
+            "node_modules/vendored.png",
+            ".top-hidden.png",
+        ] {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"file").unwrap();
+        }
+        let listed = list_files(dir.path());
+        assert!(!listed.iter().any(|file| file.contains("hidden.png") && file.starts_with(".obsidian")));
+        assert!(!listed.iter().any(|file| file.starts_with("node_modules")));
+        let before = link_index_builds();
+        let mut ready =
+            MediaResolver::with_link_index(&vault, Arc::new(LinkIndex::new(listed)));
+        let mut walked = MediaResolver::new(&vault);
+
+        for slug in ["Cards/Note", "Cards/Sub/Deep"] {
+            for name in [
+                "photo.jpg",
+                "twice.png",
+                "Media/twice.png",
+                "beside.png",
+                "./beside.png",
+                "../Media/photo.jpg",
+                "nested clip.mp4",
+                "Sub/nested clip.mp4",
+                "hidden.png",
+                "vendored.png",
+                ".top-hidden.png",
+                "missing.png",
+                "Каталоги",
+            ] {
+                for syntax in [InlineMediaSyntax::ObsidianEmbed, InlineMediaSyntax::MarkdownImage] {
+                    let inline = reference(name, syntax);
+                    assert_eq!(
+                        ready.resolve_inline_media(slug, &inline),
+                        walked.resolve_inline_media(slug, &inline),
+                        "{slug}: {name} as {syntax:?}"
+                    );
+                }
+                assert_eq!(
+                    ready.resolve_frontmatter_media(slug, name),
+                    walked.resolve_frontmatter_media(slug, name),
+                    "{slug}: {name} in the properties"
+                );
+                assert_eq!(
+                    ready.resolve_indexed_media(slug, name),
+                    walked.resolve_indexed_media(slug, name),
+                    "{slug}: {name} from the index"
+                );
+                assert_eq!(
+                    ready.resolve_note_target(slug, name),
+                    walked.resolve_note_target(slug, name),
+                    "{slug}: {name} as a note"
+                );
+                assert_eq!(
+                    ready.resolve_collection_document(name),
+                    walked.resolve_collection_document(name),
+                    "{name} as a collection"
+                );
+                assert_eq!(
+                    ready.unique_basename(name).ok(),
+                    walked.unique_basename(name).ok(),
+                    "{name} as a unique name"
+                );
+            }
+        }
+        assert_eq!(
+            ready.resolve_frontmatter_media("Cards/Note", "photo.jpg"),
+            Some(dir.path().join("Media/photo.jpg"))
+        );
+        assert_eq!(ready.resolve_frontmatter_media("Cards/Note", "twice.png"), None);
+        assert_eq!(link_index_builds() - before, 1, "only the resolver without an index walked");
     }
 
     #[test]

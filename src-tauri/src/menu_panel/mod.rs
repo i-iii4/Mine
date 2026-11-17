@@ -3,11 +3,15 @@
 //! so the menu may reach past the edge of the app's window like a system
 //! menu.
 //!
-//! One clear borderless window, made once. It is unseen until a check of
-//! its own pixels finds it clear (`native::check_transparency`); a panel
-//! that fails the check is never shown, and the menu opens on its page. At
-//! rest the panel stays on the screen, so WebKit keeps its page running,
-//! draws nothing and lets every click through.
+//! One clear borderless window, made once. The app makes it itself, of its
+//! own class, and moves into it the page of a hidden Tauri window, the
+//! panel's shell (`PANEL_LABEL`): the shell makes the page and carries what
+//! the page and the backend say to each other (МО62). The panel is unseen
+//! until a check of its own pixels finds it clear
+//! (`native::check_transparency`); a panel that fails the check is never
+//! shown, and the menu opens on its page. At rest the panel stays on the
+//! screen, so WebKit keeps its page running, draws nothing and lets every
+//! click through.
 //!
 //! An opening is one step: a page asks with the anchor, the menu as data
 //! (`spec`) and the size it counts from that, the backend lays the menu out
@@ -26,8 +30,16 @@
 //! that draws nothing can only be told by the clock (МО40).
 
 pub mod geometry;
-mod native;
+pub(crate) mod native;
 pub mod spec;
+
+/// The panel's own window with no Tauri around it, for the test that makes
+/// it of real AppKit objects on the main thread
+/// (`tests/menu_panel_window.rs`; SPEC_MENU_WINDOW.md, МО62а).
+#[cfg(target_os = "macos")]
+pub mod window {
+    pub use super::native::{adopt, forget_panel as forget};
+}
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, MutexGuard};
@@ -217,6 +229,83 @@ pub struct MenuPanelPaint {
     pub measured: MenuPanelSize,
 }
 
+/// How far the panel's page got with the menu it was told to draw: the
+/// steps before its first frame (SPEC_MENU_WINDOW.md, МО40а). The first
+/// frame itself is the paint report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuPanelStep {
+    /// The page heard the opening.
+    Received,
+    /// The page's area changed while it waited for the frame's size, to
+    /// another size.
+    Resized,
+    /// The page's area took the frame's size it waited for (МО30).
+    Sized,
+    /// React drew the menu into the page, and the page asked for its first
+    /// frame.
+    FrameRequested,
+}
+
+impl MenuPanelStep {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Received => "received",
+            Self::Resized => "resized",
+            Self::Sized => "sized",
+            Self::FrameRequested => "frame_requested",
+        }
+    }
+}
+
+/// A step of the panel's page with a menu, and the page as it was then.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct MenuPanelProgress {
+    pub source: String,
+    pub menu: u32,
+    pub step: MenuPanelStep,
+    /// The page's area then (`innerWidth`, `innerHeight`).
+    pub area: MenuPanelSize,
+    /// The page counted itself seen then (`document.visibilityState`):
+    /// WebKit gives a page it counts hidden no frames.
+    pub visible: bool,
+}
+
+/// The last step the panel's page told of a menu.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PageProgress {
+    step: MenuPanelStep,
+    area: MenuPanelSize,
+    visible: bool,
+}
+
+/// Where the panel's page stopped with a menu that drew nothing in time,
+/// for the log (МО40а): the last step it told, against the frame the
+/// backend set.
+fn stall_text(progress: Option<PageProgress>, frame: MenuPanelSize) -> String {
+    let frame_text = format!("frame={}x{}", frame.width, frame.height);
+    let Some(progress) = progress else {
+        return format!("the page told no step: it never heard the opening, {frame_text}");
+    };
+    let area_is_frame = (progress.area.width - frame.width).abs() < 1.0 && (progress.area.height - frame.height).abs() < 1.0;
+    let why = match progress.step {
+        MenuPanelStep::Received | MenuPanelStep::Resized if !area_is_frame => {
+            "the page waits for its area to take the frame's size"
+        }
+        MenuPanelStep::Received | MenuPanelStep::Resized | MenuPanelStep::Sized => {
+            "the page's area is the frame's and the page drew nothing"
+        }
+        MenuPanelStep::FrameRequested => "the page drew the menu and no frame came",
+    };
+    format!(
+        "{why}: last step={} area={}x{} {frame_text} page_visible={}",
+        progress.step.as_str(),
+        progress.area.width,
+        progress.area.height,
+        progress.visible,
+    )
+}
+
 /// What a tab's closing of its menu came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, specta::Type)]
 pub struct MenuPanelCloseOutcome {
@@ -290,9 +379,11 @@ struct PageStep {
 }
 
 /// How a menu was shown, for the log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct Shown {
     placement: Placement,
+    /// The panel's frame for this menu (МО29).
+    frame: MenuPanelSize,
     frame_changed: bool,
 }
 
@@ -322,6 +413,10 @@ struct OpenMenu {
     /// backend's layout, the frame and the keyboard took in all is
     /// `shown_at - opened_at`.
     frame_changed: bool,
+    /// The panel's frame for this menu.
+    frame: MenuPanelSize,
+    /// The last step the panel's page told of this menu (МО40а).
+    progress: Option<PageProgress>,
     painted: bool,
     /// The last number sent to the page the menu came from, and to the
     /// panel's page.
@@ -431,6 +526,8 @@ impl PanelBook {
             expected: request.size,
             placement: shown.placement,
             frame_changed: shown.frame_changed,
+            frame: shown.frame,
+            progress: None,
             painted: false,
             to_source: 0,
             to_page: 0,
@@ -487,9 +584,21 @@ impl PanelBook {
         self.last_shown.as_ref().filter(|shown| shown.is(source, menu)).cloned()
     }
 
-    /// Whether the menu is open and its page has drawn nothing yet.
-    fn unpainted(&self, source: &str, menu: u32) -> bool {
-        self.open.as_ref().is_some_and(|open| open.is(source, menu) && !open.painted)
+    /// The page told a step of the open menu `source`, `menu`; a step of
+    /// a menu that is not open is dropped.
+    fn progressed(&mut self, progress: &MenuPanelProgress) {
+        if let Some(open) = self.open_menu(&progress.source, progress.menu) {
+            open.progress = Some(PageProgress { step: progress.step, area: progress.area, visible: progress.visible });
+        }
+    }
+
+    /// Whether the menu is open and its page has drawn nothing yet: then
+    /// where its page stopped (МО40а).
+    fn unpainted(&self, source: &str, menu: u32) -> Option<String> {
+        self.open
+            .as_ref()
+            .filter(|open| open.is(source, menu) && !open.painted)
+            .map(|open| stall_text(open.progress, open.frame))
     }
 
     /// Take the menu `which` out, or the open one with `None`.
@@ -652,7 +761,11 @@ pub fn prepare(app: &AppHandle, caller: &Webview, page: &str) -> MenuPanelStatus
         .resizable(false)
         .shadow(false)
         .focused(false)
-        .visible(true)
+        // The shell: it makes the page and never comes to the screen, nor
+        // takes the keyboard or the main window's place. The panel's own
+        // window stands where the shell does and takes its page (МО62).
+        .visible(false)
+        .focusable(false)
         .skip_taskbar(true)
         .accept_first_mouse(true)
         .inner_size(REST_WIDTH_PX, REST_HEIGHT_PX)
@@ -673,12 +786,14 @@ pub fn prepare(app: &AppHandle, caller: &Webview, page: &str) -> MenuPanelStatus
     // keep the rules of a menu (МО43, МО46). The menus stay on the page.
     let watch = app.clone();
     let wake = app.clone();
+    let lost = app.clone();
     let set_up = native::configure(&window).and_then(|()| {
         native::watch(
             move || {
                 close(&watch, None, MenuPanelCloseReason::Outside);
             },
             move || app_came_back(&wake),
+            move || panel_lost_key(&lost),
         )
     });
     if let Err(why) = set_up {
@@ -699,7 +814,7 @@ pub fn prepare(app: &AppHandle, caller: &Webview, page: &str) -> MenuPanelStatus
 pub fn dispose(app: &AppHandle) {
     let Some(window) = app.get_webview_window(PANEL_LABEL) else { return };
     close(app, None, MenuPanelCloseReason::Source);
-    native::rest(&window);
+    native::rest();
     if let Err(error) = window.destroy() {
         log::warn!("menu panel not taken away: {error}");
         return;
@@ -707,18 +822,20 @@ pub fn dispose(app: &AppHandle) {
     log::info!("menu panel taken away: the menus are on the page");
 }
 
+/// The panel's window lost the keyboard by a way the watch does not see
+/// (МО44). The word of it waits in a queue: by the time it is heard a later
+/// menu may hold the keyboard, and then it is not that menu's.
+fn panel_lost_key(app: &AppHandle) {
+    if !native::is_key() {
+        close(app, None, MenuPanelCloseReason::Outside);
+    }
+}
+
+/// What Tauri says of the panel's shell.
 fn on_panel_event(app: &AppHandle, event: &WindowEvent) {
     match event {
-        // The panel lost the keyboard by a way the watch does not see
-        // (МО44). The event waits in a queue: by the time it is heard a
-        // later menu may hold the keyboard, and then it is not that menu's.
-        WindowEvent::Focused(false) => {
-            let still_key = app.get_webview_window(PANEL_LABEL).as_ref().is_some_and(native::is_key);
-            if !still_key {
-                close(app, None, MenuPanelCloseReason::Outside);
-            }
-        }
-        // ⌘W with the panel in front closes the menu, never the panel.
+        // Whatever asks the shell to close closes the menu, never the
+        // panel.
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             close(app, None, MenuPanelCloseReason::Escape);
@@ -751,17 +868,16 @@ pub fn page_ready(app: &AppHandle, caller: &Webview) {
         Some(menu) => {
             settle(app, &menu, MenuPanelCloseReason::Failed);
         }
-        None => native::rest(&window),
+        None => native::rest(),
     }
     announce_status(app);
     let handle = app.clone();
-    let checked = window.clone();
     native::check_transparency(&window, move |found| {
         let Some(state) = panel_state(&handle) else { return };
         let clear = found.clear();
         state.book().clearness = if clear { Clearness::Clear } else { Clearness::NotClear };
         if clear {
-            native::reveal(&checked);
+            native::reveal();
             log::info!("menu panel found clear: {}", found.describe());
         } else {
             log::warn!("menu panel not clear, never shown, menus open on the page: {}", found.describe());
@@ -787,8 +903,7 @@ pub fn open(app: &AppHandle, caller: &Webview, request: MenuPanelOpenRequest) ->
     // The number first: an opening the page has since closed or overtaken
     // is refused whatever else stands (МО37).
     state.book().admit(&source, &request.page, request.menu)?;
-    let panel = app.get_webview_window(PANEL_LABEL).ok_or(MenuPanelRefusal::NotReady)?;
-    if !state.book().ready() {
+    if app.get_webview_window(PANEL_LABEL).is_none() || !state.book().ready() {
         return Err(MenuPanelRefusal::NotReady);
     }
     // The panel's page draws only what is a menu (МО17).
@@ -807,7 +922,7 @@ pub fn open(app: &AppHandle, caller: &Webview, request: MenuPanelOpenRequest) ->
     }
     let placed = native::anchor_on_screen(caller, request.anchor).ok_or(MenuPanelRefusal::NoGeometry)?;
     let layout = geometry::layout(request.opener, placed.anchor, request.size, &request.submenus, placed.bound);
-    let shown = native::show(&panel, layout.origin, layout.frame);
+    let shown = native::show(layout.origin, layout.frame);
     if !shown.on_top() {
         log::warn!(
             "menu panel: menu {} of {source} not shown ({}), screen={} fullscreen={} split={}",
@@ -820,7 +935,7 @@ pub fn open(app: &AppHandle, caller: &Webview, request: MenuPanelOpenRequest) ->
         // The panel was moved for nothing: a menu still up in it goes, and
         // the keyboard goes back to the window that asked.
         if close(app, None, MenuPanelCloseReason::Source) == MenuPanelCloseOutcome::default() {
-            native::rest(&panel);
+            native::rest();
             if shown.key {
                 if let Some(asking) = app.get_window(&window) {
                     if native::make_key(&asking) {
@@ -832,7 +947,7 @@ pub fn open(app: &AppHandle, caller: &Webview, request: MenuPanelOpenRequest) ->
         return Err(MenuPanelRefusal::ShowFailed);
     }
     let shown_at = now_ms();
-    let how = Shown { placement: placed.placement, frame_changed: shown.frame_changed };
+    let how = Shown { placement: placed.placement, frame: layout.frame, frame_changed: shown.frame_changed };
     let replaced = state.book().begin(&source, &window, &request, how, opened_at, shown_at);
     if let Some(replaced) = replaced {
         // The panel stays up for the new menu: the old one only hears.
@@ -873,10 +988,10 @@ fn watch_paint(app: &AppHandle, source: String, menu: u32) {
         std::thread::sleep(PAINT_DEADLINE);
         let inner = handle.clone();
         let _ = handle.run_on_main_thread(move || {
-            let late = panel_state(&inner).is_some_and(|state| state.book().unpainted(&source, menu));
-            if late {
+            let stalled = panel_state(&inner).and_then(|state| state.book().unpainted(&source, menu));
+            if let Some(stalled) = stalled {
                 log::warn!(
-                    "card menu panel: menu {menu} of {source} drew nothing within {} ms, opened on the page",
+                    "card menu panel: menu {menu} of {source} drew nothing within {} ms, opened on the page; {stalled}",
                     PAINT_DEADLINE.as_millis()
                 );
                 close(&inner, Some((&source, menu)), MenuPanelCloseReason::Unresponsive);
@@ -885,6 +1000,17 @@ fn watch_paint(app: &AppHandle, source: String, menu: u32) {
     });
     if let Err(error) = started {
         log::warn!("menu panel: no watch over the menu's first frame: {error}");
+    }
+}
+
+/// A step of the panel's page with the menu it draws, kept for the log of
+/// a menu that draws nothing in time (МО40а).
+pub fn progress(app: &AppHandle, caller: &Webview, progress: &MenuPanelProgress) {
+    if caller.label() != PANEL_LABEL {
+        return;
+    }
+    if let Some(state) = panel_state(app) {
+        state.book().progressed(progress);
     }
 }
 
@@ -969,24 +1095,17 @@ pub fn close(app: &AppHandle, which: Option<(&str, u32)>, reason: MenuPanelClose
 /// `closed` is out of the book: the panel rests, the keyboard goes back,
 /// both pages hear.
 fn settle(app: &AppHandle, closed: &OpenMenu, reason: MenuPanelCloseReason) -> MenuPanelCloseOutcome {
-    let panel = app.get_webview_window(PANEL_LABEL);
-    let panel_was_key = panel.as_ref().is_some_and(native::is_key);
+    let panel_was_key = native::is_key();
     // At rest the panel passes clicks and cannot take the keyboard: when
     // the app comes back, the window the menu came from has it (МО46).
-    if let Some(panel) = &panel {
-        native::rest(panel);
-    }
+    native::rest();
     let app_active = native::app_is_active();
     let mut key_returned = false;
     if panel_was_key && app_active {
         match app.get_window(&closed.window) {
             Some(window) => key_returned = native::make_key(&window),
             // The window is gone: the panel must not keep the keyboard.
-            None => {
-                if let Some(panel) = &panel {
-                    native::give_up_key(panel);
-                }
-            }
+            None => native::give_up_key(),
         }
     }
     if let Some(state) = panel_state(app) {
@@ -1044,10 +1163,7 @@ pub fn closes_for_command(app: &AppHandle) -> bool {
 pub fn painted(app: &AppHandle, paint: &MenuPanelPaint) {
     let Some(state) = panel_state(app) else { return };
     let Some(menu) = state.book().painted(&paint.source, paint.menu) else { return };
-    let look = app
-        .get_window(&menu.window)
-        .zip(app.get_webview_window(PANEL_LABEL))
-        .map(|(window, panel)| native::look(&window, &panel));
+    let look = app.get_window(&menu.window).map(|window| native::look(&window));
     let still_open = state.book().open.as_ref().is_some_and(|open| open.is(&paint.source, paint.menu));
     let time = steps(&menu, paint);
     // The page counts the largest size the menu gets while open (МО28): a
@@ -1122,14 +1238,14 @@ impl WindowLook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geometry::{MenuAlign, ScreenRect};
+    use geometry::ScreenRect;
 
     fn request(menu: u32) -> MenuPanelOpenRequest {
         MenuPanelOpenRequest {
             page: "load-1".to_string(),
             menu,
             anchor: ScreenRect { x: 0.0, y: 0.0, width: 24.0, height: 24.0 },
-            opener: MenuOpener::Plate { align: MenuAlign::End },
+            opener: MenuOpener::Plate,
             spec: MenuSpec { role: spec::MenuWidthRole::Action, entries: Vec::new() },
             by_key: false,
             buttons: None,
@@ -1295,14 +1411,51 @@ mod tests {
     fn a_menu_its_page_has_not_drawn_is_watched_until_it_draws() {
         let mut book = ready_book();
         begin(&mut book, "tab-a", "window-a", 1);
-        assert!(book.unpainted("tab-a", 1));
+        assert!(book.unpainted("tab-a", 1).is_some());
         assert!(book.painted("tab-a", 1).is_some());
-        assert!(!book.unpainted("tab-a", 1));
-        assert!(!book.unpainted("tab-a", 2));
+        assert!(book.unpainted("tab-a", 1).is_none());
+        assert!(book.unpainted("tab-a", 2).is_none());
         // A late report for a menu that closed still finds its timings.
         book.finish(None);
         assert!(book.painted("tab-a", 1).is_some());
         assert!(book.painted("tab-b", 1).is_none());
+    }
+
+    fn step(menu: u32, step: MenuPanelStep, area: (f64, f64), visible: bool) -> MenuPanelProgress {
+        MenuPanelProgress {
+            source: "tab-a".into(),
+            menu,
+            step,
+            area: MenuPanelSize { width: area.0, height: area.1 },
+            visible,
+        }
+    }
+
+    /// МО40а: a menu that draws nothing in time says where its page stopped.
+    #[test]
+    fn a_menu_that_draws_nothing_says_where_its_page_stopped() {
+        let frame = MenuPanelSize { width: 564.0, height: 332.0 };
+        let mut book = ready_book();
+        let shown = Shown { frame, ..Shown::default() };
+        book.begin("tab-a", "window-a", &request(1), shown, 3.0, 4.0);
+        let stalled = book.unpainted("tab-a", 1).expect("the menu is unpainted");
+        assert!(stalled.starts_with("the page told no step: it never heard the opening"), "{stalled}");
+        book.progressed(&step(1, MenuPanelStep::Received, (264.0, 56.0), true));
+        let stalled = book.unpainted("tab-a", 1).expect("the menu is unpainted");
+        assert_eq!(
+            stalled,
+            "the page waits for its area to take the frame's size: last step=received area=264x56 frame=564x332 page_visible=true"
+        );
+        book.progressed(&step(1, MenuPanelStep::Sized, (564.0, 332.0), true));
+        assert!(book.unpainted("tab-a", 1).is_some_and(|text| text.starts_with("the page's area is the frame's and the page drew nothing")));
+        book.progressed(&step(1, MenuPanelStep::FrameRequested, (564.0, 332.0), false));
+        assert_eq!(
+            book.unpainted("tab-a", 1).as_deref(),
+            Some("the page drew the menu and no frame came: last step=frame_requested area=564x332 frame=564x332 page_visible=false")
+        );
+        // A step of another menu, or of a closed one, is dropped.
+        book.progressed(&step(2, MenuPanelStep::Received, (1.0, 1.0), true));
+        assert!(book.unpainted("tab-a", 1).is_some_and(|text| text.contains("frame_requested")));
     }
 
     #[test]

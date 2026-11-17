@@ -12,7 +12,7 @@ import {
   spaceStats,
 } from "@/lib/commands";
 import type { SpaceEntry, SpaceStats } from "@/types";
-import { SpacesSection, reorderedPaths } from "./SpacesSection";
+import { SPACE_ACTIONS_SPEC, SpacesSection, reorderedPaths } from "./SpacesSection";
 
 /** The space list as the backend returns it: every known space, available,
  *  with an identity named after its folder. */
@@ -314,6 +314,45 @@ describe("SpacesSection", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(forgetKnownVault).not.toHaveBeenCalled();
     expect(screen.getByText("Archive")).toBeInTheDocument();
+  });
+
+  /// SPEC_MENU_WINDOW.md, Д2: the row's menu goes to the menu panel when
+  /// the menu mode is `window`, and its command asks the same question.
+  it("asks the menu panel for a space's actions, and asks before removing on the panel's choice", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { MENU_MODE_STORAGE_KEY } = await import("@/lib/menuMode");
+    const { MENU_PANEL_TO_SOURCE_EVENT } = await import("@/lib/menuPanelProtocol");
+    const { resetMenuPanelSourceForTests } = await import("@/lib/menuPanelSource");
+    window.localStorage.setItem(MENU_MODE_STORAGE_KEY, "window");
+    resetMenuPanelSourceForTests(true);
+    try {
+      renderSpaces();
+      await screen.findByText("Archive");
+      vi.mocked(invoke).mockClear();
+      const row = spaceRowOf("Archive");
+      const trigger = within(row).getByRole("button", { name: /Space actions/ });
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+
+      const opened = vi.mocked(invoke).mock.calls.filter(([command]) => command === "menu_panel_open")
+        .map(([, args]) => (args as { request: { opener: unknown; spec: unknown; size: unknown } }).request);
+      expect(opened).toHaveLength(1);
+      expect(opened[0]?.opener).toEqual({ kind: "plate" });
+      expect(opened[0]?.spec).toEqual(SPACE_ACTIONS_SPEC);
+      // One row of two lines of text.
+      expect(opened[0]?.size).toEqual({ width: 240, height: 10 + 40 });
+      await waitFor(() => expect(trigger.getAttribute("data-state")).toBe("open"));
+      expect(screen.queryByRole("menu")).toBeNull();
+
+      act(() => {
+        const payload = { menu: 1, seq: 1, body: { kind: "action", request: 1, action: { kind: "run", id: "remove" } } };
+        window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_SOURCE_EVENT, { detail: { event: MENU_PANEL_TO_SOURCE_EVENT, payload } }));
+      });
+      expect(await screen.findByRole("alertdialog", { name: "Remove Archive from the list?" })).toBeInTheDocument();
+      expect(forgetKnownVault).not.toHaveBeenCalled();
+    } finally {
+      window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+      resetMenuPanelSourceForTests();
+    }
   });
 
   it("removes a space that is not open", async () => {

@@ -2,7 +2,7 @@
 // «Уведомления», user's decision of 14.10.2026): 16 px above the bar's top
 // edge, read from where the bar actually is in the layout, so whatever
 // stands below it (the window's frame line) is counted too. Without a bar
-// the corner keeps its inset from the window's edge (`--edge-rhythm`).
+// the corner keeps its inset from the window's edge (`--shell-rhythm`).
 
 /** The gap between a notification and the bar's top edge. */
 export const NOTIFICATION_GAP_OVER_BAR_PX = 16;

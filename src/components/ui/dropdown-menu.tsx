@@ -11,6 +11,7 @@ import {
   MENU_POINT_OFFSET_PX,
   menuPlateOf,
   menuPlateOffsets,
+  plateMenuAlign,
   type FloatingMenuWidth,
   type MenuAlign,
   type MenuAnchor,
@@ -99,44 +100,58 @@ function DropdownMenuTrigger({
 }
 
 // Every dropdown menu opens MENU_PLATE_GAP_PX off the visible plate of its
-// button and flush with one of the plate's edges (user's decision of
-// 11.10.2026; DESIGN_SYSTEM.md, «Всплывающие элементы», «Отступ от кнопки»).
-// Radix anchors to the trigger's box, and a chrome button's box is the whole
-// row with its plate centred inside, so both offsets are measured from the
-// plate on every opening. A menu that flips to the other side keeps the gap:
-// the plate stands as far from the box's top as from its bottom.
+// button (user's decision of 11.10.2026; DESIGN_SYSTEM.md, «Всплывающие
+// элементы», «Отступ от кнопки») and right and down off it: its left edge on
+// the plate's left, turned onto the plate's right edge where the window's
+// right edge leaves no room (user's decision of 16.11.2026;
+// SPEC_MENU_WINDOW.md, МО7, МО69). Radix anchors to the trigger's box, and a
+// chrome button's box is the whole row with its plate centred inside, so the
+// edge and both offsets are measured from the plate on every opening. A menu
+// that flips to the other side keeps the gap: the plate stands as far from
+// the box's top as from its bottom.
 function useMenuPlateOffsets(
   surface: HTMLElement | null,
   side: MenuSide,
-  align: MenuAlign,
+  fixedAlign: MenuAlign | undefined,
+  edge: number,
   plateOf?: (trigger: HTMLElement) => HTMLElement | null
-): MenuPlateOffsets {
-  const [offsets, setOffsets] = React.useState<MenuPlateOffsets>({
+): MenuPlateOffsets & { align: MenuAlign } {
+  const [offsets, setOffsets] = React.useState<MenuPlateOffsets & { align: MenuAlign }>({
     sideOffset: MENU_PLATE_GAP_PX,
     alignOffset: 0,
+    align: fixedAlign ?? "start",
   })
   React.useLayoutEffect(() => {
     if (!surface) return
     const trigger = menuTriggerOf(surface)
     if (!trigger) return
-    const next = menuPlateOffsets(
-      trigger.getBoundingClientRect(),
-      (plateOf?.(trigger) ?? menuPlateOf(trigger)).getBoundingClientRect(),
-      side,
-      align
-    )
+    const plate = (plateOf?.(trigger) ?? menuPlateOf(trigger)).getBoundingClientRect()
+    // The surface's width is its role's (global.css), known before Radix
+    // places it.
+    const align =
+      fixedAlign ?? plateMenuAlign(plate, surface.offsetWidth, { left: edge, right: window.innerWidth - edge })
+    const next = { ...menuPlateOffsets(trigger.getBoundingClientRect(), plate, side, align), align }
     setOffsets((current) =>
-      current.sideOffset === next.sideOffset && current.alignOffset === next.alignOffset
+      current.sideOffset === next.sideOffset && current.alignOffset === next.alignOffset && current.align === next.align
         ? current
         : next
     )
-  }, [surface, side, align, plateOf])
+  }, [surface, side, fixedAlign, edge, plateOf])
   return offsets
+}
+
+/** The distance a layer keeps from the window's left and right edges. */
+function sideEdgeOf(padding: React.ComponentProps<typeof DropdownMenuPrimitive.Content>["collisionPadding"]): number {
+  if (typeof padding === "number") return padding
+  return Math.max(padding?.left ?? 0, padding?.right ?? 0)
 }
 
 // The width is the role's: `action` unless the menu is a list under a search
 // field (src/lib/floatingLayer.ts). A call site never sets it in pixels, nor
-// the menu's distance from its button: it names the edge (`align`) alone.
+// the menu's distance from its button, nor the edge of the button it stands
+// on: one rule gives the edge (`plateMenuAlign`). `align` fixes the edge for
+// a menu whose place was chosen elsewhere: the menu panel's page draws the
+// menu where the backend laid it out by the same rule on the screen.
 //
 // A menu a right click opened stands at the point of the click, not off a
 // button (`anchor="point"`, the trigger a box of no size on the point): its
@@ -146,7 +161,7 @@ function useMenuPlateOffsets(
 function DropdownMenuContent({
   className,
   side = "bottom",
-  align = "start",
+  align,
   anchor = "plate",
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   widthRole = "action",
@@ -160,6 +175,7 @@ function DropdownMenuContent({
   "side" | "align" | "sideOffset" | "alignOffset"
 > & {
   side?: MenuSide
+  /** The edge chosen elsewhere; by default the rule of `plateMenuAlign`. */
   align?: MenuAlign
   /** What the menu stands at: its button's plate, or the point of a click. */
   anchor?: MenuAnchor
@@ -180,7 +196,7 @@ function DropdownMenuContent({
     [keyRef]
   )
   const surface = useMenuSurface("dropdown", ownRef, { onPointerDownOutside, onCloseAutoFocus })
-  const plate = useMenuPlateOffsets(surfaceNode, side, align, plateOf)
+  const plate = useMenuPlateOffsets(surfaceNode, side, align, sideEdgeOf(collisionPadding), plateOf)
   const atPoint = anchor === "point"
   return (
     <DropdownMenuPortal>
@@ -189,7 +205,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         data-floating-menu={widthRole}
         side={atPoint ? "right" : side}
-        align={atPoint ? "start" : align}
+        align={atPoint ? "start" : plate.align}
         sideOffset={atPoint ? MENU_POINT_OFFSET_PX : plate.sideOffset}
         alignOffset={atPoint ? 0 : plate.alignOffset}
         collisionPadding={collisionPadding}

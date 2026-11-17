@@ -5,9 +5,9 @@
 // never changing its size or its place across; the lines, the column guides,
 // the strips and the counts show over the move's second half, and going back
 // they fade within its first third while the rows gather. The List's own
-// marks, its dotted leader and its count, do the mirror. One spring, the compact stack's (channelIcon.ts, through
-// `morphSpring`); a crossing back mid-move turns it round from where it is,
-// at the speed it had.
+// marks, its dotted leader and its count, do the mirror. One spring, the
+// interface's (spring.ts, `springRun`); a crossing back mid-move turns it
+// round from where it is, at the speed it had.
 //
 // The edge in hand moves the rows on the spring on every motion level: the
 // move answers the drag (SPEC_MOTION_LEVELS.md, Р1, С3; user's decision of
@@ -18,10 +18,10 @@
 //
 // This module owns the scrollport's look (sidebarLook.ts): the attribute the
 // stylesheet keys the compact rows on. At rest it follows the width; for a
-// command at Off or after a key, under the narrow table (postponed) and
-// when a frame moves the width across the threshold by more than a tile and
-// its gap (the most one frame of ЛМ5 adds a tile for, user's decision of
-// 01.11.2026) it changes at once. Otherwise the table is laid out for the whole move:
+// command at Off or after a key and when a frame moves the width across
+// the threshold by more than a tile and its gap (the most one frame of ЛМ5
+// adds a tile for, user's decision of 01.11.2026) it changes at once.
+// Otherwise the table is laid out for the whole move:
 // going to it the scrollport takes the table's look in the frame that
 // crossed, before it paints, so its strips take their whole count there
 // (SPEC_SIDEBAR_STRIP.md, ЛМ2); going back it keeps the table until the
@@ -50,17 +50,15 @@
 // the frames of the move read for, on the names that slide.
 
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarBesideMinWidthPx, sidebarCompactRowsBelowPx, sidebarNameColumnPx, sidebarPanelWidthPx, sidebarRowsWidthPx } from "./appLayout";
-import { CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
-import { getSidebarStyle } from "./compactStack";
 import { MOTION_SPRING_MOVE_MS, type SpringMotion } from "./motion";
 import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, type SidebarLook, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel, sidebarMorphMotion } from "./sidebarLook";
-import { animatesPseudoElements, morphMove, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
+import { SPRING_MS, SPRING_SAMPLES, moveRun, springRun, type SpringRun } from "./spring";
 import { holdStripWidths } from "./sidebarStripWidth";
 
 // ─── Time ───────────────────────────────────────────────────────────────
 
-/** The move's settling time from rest, ms: the stack spring's, 441. */
-export const LIST_MORPH_SETTLE_MS = CHANNEL_ICON_SPRING_MS;
+/** The move's settling time from rest, ms: the spring's, 441. */
+export const LIST_MORPH_SETTLE_MS = SPRING_MS;
 
 /** The first third of the move: the parts of the look being left are gone
  *  by its end (the card window's content, `CARD_PEEK_CONTENT_FADE_MS`). */
@@ -112,15 +110,15 @@ export function fadeTrack(way: FadeWay, from: number, settleMs: number = LIST_MO
 export interface MoveSegment {
   q0: number;
   q1: number;
-  spring: MorphSpring;
+  spring: SpringRun;
 }
 
 /** A run from `q0` toward `q1` that starts at `speed` (List-ness per
- *  second): from rest, the stack's own spring; Minimal's move (`"move"`)
+ *  second): from rest, the spring itself; Minimal's move (`"move"`)
  *  from rest whatever the speed (РД4). */
 export function segmentToward(q0: number, q1: number, speed: number, motion: Exclude<SpringMotion, "instant"> = "spring"): MoveSegment {
   const span = q1 - q0;
-  return { q0, q1, spring: motion === "move" ? morphMove() : morphSpring(span !== 0 ? speed / span : 0) };
+  return { q0, q1, spring: motion === "move" ? moveRun() : springRun(span !== 0 ? speed / span : 0) };
 }
 
 /** A run's List-ness at evenly spaced times: the spring's own samples, the
@@ -226,8 +224,7 @@ export function listRowAt(model: ListRowModel, nameHeight: number): { height: nu
 export const LIST_MORPH_STEP_LIMIT_PX = SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIEW_TILE_GAP_PX;
 
 /** What a width of the list does. `idle`: the move does not apply (a
- *  command's width at Off or after a key, the narrow table below the
- *  threshold, a list not laid out); a
+ *  command's width at Off or after a key, a list not laid out); a
  *  move lands and the look follows the width at once. `rest`: no crossing;
  *  the look follows the width. `instant`: the width crossed the threshold
  *  by more than `LIST_MORPH_STEP_LIMIT_PX` in one frame; a move lands and
@@ -437,14 +434,23 @@ function ownOpacity(element: Element): number {
   return Number.isFinite(opacity) ? opacity : 1;
 }
 
+/** Whether WAAPI animates a pseudo-element here (the rows' lines, the
+ *  List's marks). Without it those parts change with the layout. */
+function animatesPseudoElements(element: Element): boolean {
+  try {
+    return new KeyframeEffect(element, null, { pseudoElement: "::after" }).pseudoElement === "::after";
+  } catch {
+    return false;
+  }
+}
+
 /** Keeps the list's scrollport `nav` in the look its width gives and moves
  *  its rows between the List and the table as the list crosses the compact
  *  threshold. Puts it in its look at once, before it is first painted.
  *  Returns the teardown. Where ResizeObserver is missing nothing is kept;
- *  where WAAPI is, for a command's width at Off or after a key, while the
- *  narrow table is the look below the threshold (sidebarRowsMorph.ts) and
- *  for a step larger than `LIST_MORPH_STEP_LIMIT_PX` the look changes at
- *  once. While the sidebar's
+ *  where WAAPI is, for a command's width at Off or after a key and for a
+ *  step larger than `LIST_MORPH_STEP_LIMIT_PX` the look changes at once.
+ *  While the sidebar's
  *  width moves (`SIDEBAR_WIDTH_MOTION_ATTRIBUTE`: a collapse, an opening,
  *  leaving the row and coming back) the look is its open width's from the
  *  motion's first frame to its last, whatever width it passes, and nothing
@@ -978,7 +984,7 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     // and at once after a key (С3, РД4, Р4).
     const motion = sidebarMorphMotion();
     const step = widthStep({
-      active: canMove && getSidebarStyle() === "list" && motion !== "instant",
+      active: canMove && motion !== "instant",
       threshold,
       width,
       previous,

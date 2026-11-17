@@ -449,7 +449,14 @@ pub async fn list_pending_thumb_upgrades(
             for block in &blocks {
                 // Block <slug>.jpg upgrade — only when the current thumb is not
                 // already a finished picture.
+                // The browser reads the media through the asset protocol; a
+                // file whose contents are in iCloud is brought down by the
+                // preview pass and offered once it is here. Offered before,
+                // every refused read came back on the next call: some 190
+                // cards a call, about 15 000 refused reads on 17.11.2026
+                // (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
                 let slug_upgrade = resolve_upgrade_media_with(&mut resolver, block.upgrade_input())
+                    .filter(|media| !crate::storage::cloud_files::is_content_offloaded(&media.path))
                     .filter(|media| needs_browser_thumb_upgrade(&vault, block, epoch, media))
                     .map(|media| (media.path, media.kind.as_str()));
                 // Per-video gallery tile posters that are still missing. These
@@ -532,7 +539,9 @@ fn resolve_tile_posters(
         if thumbnails::is_finished_picture(&poster, epoch) {
             continue;
         }
-        if let Some(media_path) = resolve_block_reference(vault, &block.slug, &tile.source_path) {
+        if let Some(media_path) = resolve_block_reference(vault, &block.slug, &tile.source_path)
+            .filter(|path| !crate::storage::cloud_files::is_content_offloaded(path))
+        {
             let kind = if tile.is_video {
                 PreviewMediaKind::Video
             } else {

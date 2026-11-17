@@ -150,8 +150,9 @@ impl IndexedBlock {
 }
 
 /// A lightweight block for list/grid views. Body is truncated (max 500 chars),
-/// description is omitted, source is omitted.
-#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+/// description is omitted, source is omitted. Read back from a page too: the
+/// outside window shows the card a page sends (SPEC_OUTSIDE_WINDOW.md, НО7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct LightBlock {
     pub id: i64,
     pub slug: String,
@@ -201,7 +202,7 @@ pub struct LightBlock {
     pub search_match: Option<SearchMatch>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchMatchField {
     Title,
@@ -212,7 +213,7 @@ pub enum SearchMatchField {
     Semantic,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchMatchKind {
     Exact,
@@ -222,13 +223,13 @@ pub enum SearchMatchKind {
     Semantic,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct SearchTextRange {
     pub start: usize,
     pub end: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct SearchMatch {
     pub field: SearchMatchField,
     pub kind: SearchMatchKind,
@@ -397,7 +398,7 @@ const FEED_AUTOPLAY_HARD_MAX_LONGEST_SIDE_PX: u32 = 5120;
 const FEED_AUTOPLAY_HARD_MAX_PIXEL_AREA: u64 = 12_000_000;
 
 /// A tag with its usage count across blocks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct TagCount {
     pub tag: String,
     pub count: usize,
@@ -3727,7 +3728,7 @@ mod tests {
     fn the_feed_reads_newest_or_oldest_first_and_pages_without_gaps() {
         // SPEC_FEED_DISPLAY.md, Д6 and Д8: equal dates by name in both orders,
         // so a page boundary never repeats or skips a card.
-        use crate::storage::block_queries::{list_grid_blocks_in_order, FeedOrder};
+        use crate::storage::block_queries::{list_grid_blocks_in_order, FeedOrder, FeedPageToken};
         let conn = test_conn();
         for (slug, saved_at) in [
             ("first", "2026-01-01T00:00:00Z"),
@@ -3738,22 +3739,42 @@ mod tests {
             upsert_block(&conn, &make_block_full(slug, "article", None, saved_at, &[], "text"), None)
                 .unwrap();
         }
-        let slugs = |order: FeedOrder, offset: usize, limit: usize| {
-            let (blocks, has_more) =
-                list_grid_blocks_in_order(&conn, &crate::domain::windows::TabLocation::Everything, offset, limit, order).unwrap();
-            (blocks.into_iter().map(|block| block.slug).collect::<Vec<_>>(), has_more)
+        // A page starts after the place of the last card of the one before.
+        let page = |order: FeedOrder, after: Option<&crate::storage::index::LightBlock>, limit: usize| {
+            let after = after.map(FeedPageToken::of);
+            list_grid_blocks_in_order(
+                &conn,
+                &crate::domain::windows::TabLocation::Everything,
+                after.as_ref(),
+                limit,
+                order,
+            )
+            .unwrap()
+        };
+        let slugs = |blocks: &[crate::storage::index::LightBlock]| {
+            blocks.iter().map(|block| block.slug.clone()).collect::<Vec<_>>()
         };
 
-        assert_eq!(
-            slugs(FeedOrder::Newest, 0, 10).0,
-            ["same-a", "same-b", "second", "first"]
-        );
-        assert_eq!(
-            slugs(FeedOrder::Oldest, 0, 10).0,
-            ["first", "second", "same-a", "same-b"]
-        );
-        assert_eq!(slugs(FeedOrder::Oldest, 0, 2), (vec!["first".to_string(), "second".to_string()], true));
-        assert_eq!(slugs(FeedOrder::Oldest, 2, 2), (vec!["same-a".to_string(), "same-b".to_string()], false));
+        assert_eq!(slugs(&page(FeedOrder::Newest, None, 10).0), ["same-a", "same-b", "second", "first"]);
+        assert_eq!(slugs(&page(FeedOrder::Oldest, None, 10).0), ["first", "second", "same-a", "same-b"]);
+        let (oldest, has_more) = page(FeedOrder::Oldest, None, 2);
+        assert_eq!((slugs(&oldest), has_more), (vec!["first".to_string(), "second".to_string()], true));
+        let (rest, has_more) = page(FeedOrder::Oldest, oldest.last(), 2);
+        assert_eq!((slugs(&rest), has_more), (vec!["same-a".to_string(), "same-b".to_string()], false));
+        // A page boundary between two cards of one date neither repeats nor
+        // skips a card, in either order.
+        let (newest, _) = page(FeedOrder::Newest, None, 1);
+        assert_eq!(slugs(&newest), ["same-a"]);
+        let (after_tie, has_more) = page(FeedOrder::Newest, newest.last(), 2);
+        assert_eq!((slugs(&after_tie), has_more), (vec!["same-b".to_string(), "second".to_string()], true));
+        let (third, _) = page(FeedOrder::Oldest, rest.first(), 2);
+        assert_eq!(slugs(&third), ["same-b"]);
+        // The place stands when its card is gone: the page after it is the same.
+        let gone = newest[0].clone();
+        remove_block(&conn, "same-a").unwrap();
+        assert_eq!(slugs(&page(FeedOrder::Newest, Some(&gone), 2).0), ["same-b", "second"]);
+        upsert_block(&conn, &make_block_full("same-a", "article", None, "2026-03-01T00:00:00Z", &[], "text"), None)
+            .unwrap();
         // The default stays newest first for every other reader.
         assert_eq!(
             list_grid_blocks(&conn, None, 0, 10).unwrap().0[0].slug,
@@ -3801,7 +3822,7 @@ mod tests {
             let location = tag.map_or(crate::domain::windows::TabLocation::Everything, |tag: &str| {
                 crate::domain::windows::TabLocation::Collection { tag: tag.to_string() }
             });
-            read_grid_snapshot(&conn, &location, 0, 10, FeedOrder::Newest).unwrap().blocks
+            read_grid_snapshot(&conn, &location, None, 10, FeedOrder::Newest).unwrap().blocks
         };
         let sidebar_order = ["Zines", "Art", "Cities"];
 

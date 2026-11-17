@@ -428,7 +428,7 @@ async function keyboardAtOnce() {
     await page.goto(new URL(`${route}?width=${look === "table" ? 600 : 320}${query}`, vite.origin).href);
     await page.waitForSelector('[data-sidebar-row-key="tag:alpha"]', { timeout: COLD_START_MS });
     await page.mouse.move(900, 650);
-    // The marks turn once as the page loads, on the stack's spring.
+    // The marks turn once as the page loads, on the spring (spring.ts).
     await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
     return page;
   };

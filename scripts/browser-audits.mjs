@@ -204,6 +204,9 @@ async function main() {
     // WebKit, a recording of the page: pictures that are late while the feed
     // scrolls, which Chromium never shows.
     await runAudit("scripts/feed-images-audit.mjs", {}, onAuditChildChange);
+    // WebKit and Chromium: the page's work when a page of the feed arrives
+    // and when a card changes with 7 000 cards held.
+    await runAudit("scripts/feed-growth-audit.mjs", {}, onAuditChildChange);
     // Build their pages for production too: the graph's first paint, frames
     // and long tasks and the cold feed are the app's (AUDIT_PERFORMANCE.md, Пр3).
     await runAudit("scripts/graph-view-audit.mjs", {}, onAuditChildChange);
@@ -227,6 +230,8 @@ async function main() {
     await runAudit("scripts/settings-menu-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/card-drag-scroll-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/menu-panel-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/fade-text-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/outside-window-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/narrow-window-audit.mjs", {}, onAuditChildChange);
     // Builds its page for production; the Rust test of the full read builds
     // the tests optimised and runs with `bun run test:sidebar-strip`.

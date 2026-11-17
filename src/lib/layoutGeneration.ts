@@ -1,6 +1,6 @@
 import type { LightBlock } from "@/types";
 import { parsePreviewManifest } from "@/lib/cardLayout";
-import { getDisplayTitle, getFallbackLabel } from "@/lib/displayTitle";
+import { cardTextIdentity } from "@/lib/cardTextIdentity";
 
 export type LayoutGenerationKey = string;
 export type BlockLayoutSignature = string;
@@ -53,14 +53,16 @@ function previewManifestSignature(block: LightBlock): string {
 
 export function buildBlockLayoutSignature(block: LightBlock): BlockLayoutSignature {
   // The parts as they are, each ended by a sign none of them holds: the
-  // signature is hashed whole, once (`blockLayoutSignatureHash`).
+  // signature is hashed whole, once (`blockLayoutSignatureHash`). The card's
+  // title and text enter by the hash of the text its words are measured for
+  // (`cardTextIdentity`): the layout reads them through those words alone,
+  // and the row's text is then read once for the signature and the measure.
   return [
     `id=${block.id}`,
     `type=${block.block_type}`,
-    `title=${getDisplayTitle(block) ?? ""}`,
-    `fallback=${getFallbackLabel(block)}`,
+    `kind=${block.card_kind}`,
+    `text=${cardTextIdentity(block).textHash}`,
     `author=${block.author ?? ""}`,
-    `text=${block.preview_text ?? block.body}`,
     `url=${block.url ?? ""}`,
     `thumb=${block.thumbnail ?? ""}`,
     `file=${block.media_file ?? ""}`,

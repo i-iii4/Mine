@@ -523,7 +523,12 @@ fn init_connection(conn: &Connection) -> Result<()> {
     anyhow::ensure!(installed <= CURRENT_SCHEMA_VERSION,
         "database schema version {installed} is newer than supported version {CURRENT_SCHEMA_VERSION}");
     apply_pragmas(conn)?;
-    migrations::migrate_and_validate(conn)
+    migrations::migrate_and_validate(conn)?;
+    // Every row this connection writes to the tables a feed row is read from
+    // is told to the commands that name the cards they changed
+    // (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+    crate::storage::feed_changes::listen(conn);
+    Ok(())
 }
 
 fn init_read_only_connection(conn: &Connection) -> Result<()> {

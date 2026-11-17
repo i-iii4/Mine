@@ -10,10 +10,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import {
-  ContextMenu,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import type {
   DeleteBlocksPlan,
   LightBlock,
@@ -22,21 +18,19 @@ import type {
   TagCount,
 } from "@/types";
 import { placeKey } from "@/lib/tabPage";
+import { onPointerOffMenus } from "@/lib/openMenus";
 import { useTabVisible } from "@/lib/tabVisibility";
 import { useDensity } from "@/lib/density";
 import { CardColumnWidthContext, FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 import { MeasureCard } from "./MeasureCard";
-import { CardTagMenu } from "./CardContextMenu";
-import { CARD_POINT_OPENER, CardPanelPointMenu, startCardMenuPanel, type CardPanelCard } from "./CardHoverMenu";
-import { menuPanelUsable, type MenuPanelSession } from "@/lib/menuPanelSource";
-import { useCollectionNameCheck } from "@/hooks/useCollectionNameRefusal";
+import { CardPointMenuHost, type CardPointMenuHandle } from "./CardHoverMenu";
 import { createPortal } from "react-dom";
 import { GroupSelectionCommands } from "./GroupSelectionCommands";
 import type { MembershipAnswer } from "./CollectionPicker";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
-import { GroupSelectionContextMenu } from "./GroupSelectionContextMenu";
+import { GroupSelectionPointMenuHost, type GroupSelectionPointMenuHandle } from "./GroupSelectionContextMenu";
 import {
   DeleteSelectionWindow,
   type DeleteSelectionAction,
@@ -143,6 +137,7 @@ import {
   rememberedPositionAt,
   type ColumnMemory,
 } from "./grid/feedLayout";
+import { indexFeed, type FeedIndex } from "./grid/feedIndex";
 import {
   createWordMetricsLedger,
   planWordMetrics,
@@ -362,6 +357,8 @@ interface GridContext {
   gridTopInset: number;
   focusedSlug: string | null;
   pinnedActionMenuSlug: string | null;
+  /** The card a right click's menu holds in its hover look (С7.8). */
+  menuHeldSlug: string | null;
   selectedSlugs: ReadonlySet<string>;
   selectedBlocks: readonly LightBlock[];
   actionMenuRequest: { slug: string; sequence: number } | null;
@@ -599,37 +596,14 @@ export function Grid({
   const [feedScrollSignal, setFeedScrollSignal] = useState<FeedScrollSignal>(
     INITIAL_FEED_SCROLL_SIGNAL,
   );
-  const [menuBlock, setMenuBlock] = useState<LightBlock | null>(null);
-  /// Whether the next right-click menu addresses one card or the selection.
-  /// Decided when the menu is summoned, because that is the only moment the
-  /// clicked card and the selection are both known.
-  const [contextMenuScope, setContextMenuScope] = useState<"card" | "selection">("card");
-  /// TRIAL: a card's right click menu in the menu panel (DESIGN_SYSTEM.md,
-  /// «Меню карточки в отдельном окне: проба»), opened by the click's own
-  /// handler; `onPage` once the panel could not show it.
-  const [panelPointMenu, setPanelPointMenu] = useState<{
-    block: LightBlock;
-    session: MenuPanelSession;
-    x: number;
-    y: number;
-    onPage: boolean;
-    sequence: number;
-  } | null>(null);
-  const panelPointSequenceRef = useRef(0);
-  /// The feed opened that menu and owns it: it holds the menu's handle and
-  /// closes the menu when it unmounts (SPEC_MENU_WINDOW.md, МО41, МО42). The
-  /// effect has no dependencies: in StrictMode its cleanup runs once on
-  /// mount, when no menu is open yet.
-  const panelPointSessionRef = useRef<MenuPanelSession | null>(null);
-  useEffect(() => () => panelPointSessionRef.current?.close("source"), []);
-  const checkCollectionName = useCollectionNameCheck(undefined);
-  /// What the panel's choices act on when they come.
-  const panelCardRef = useRef<Omit<CardPanelCard<LightBlock>, "block">>({
-    vaultPath, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete, checkName: checkCollectionName,
-  });
-  panelCardRef.current = {
-    vaultPath, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete, checkName: checkCollectionName,
-  };
+  /// The menus a right click opens, a card's and the selection's: each is a
+  /// permanent owner opened through its handle in the click's own handler,
+  /// in the menu panel or on the page, the menu's corner on the point either
+  /// way (SPEC_MENU_WINDOW.md, МО10, МО19, МО41, МО68; А2, Б1). Which of the
+  /// two opens is decided when the menu is summoned: that is the only moment
+  /// the clicked card and the selection are both known.
+  const cardPointMenuRef = useRef<CardPointMenuHandle<LightBlock>>(null);
+  const selectionPointMenuRef = useRef<GroupSelectionPointMenuHandle>(null);
   /// The group delete window: the request it answers, and whether it is open.
   /// A closed window keeps its request while it leaves.
   const [deleteSelection, setDeleteSelection] = useState<{
@@ -655,6 +629,21 @@ export function Grid({
     sequence: number;
   } | null>(null);
   const [pinnedActionMenuSlug, setPinnedActionMenuSlug] = useState<string | null>(null);
+  // The card a right click opened a menu on keeps the look the pointer's
+  // hover gives it, though the context menu holds every hover answer: while
+  // the menu is up, and after it closed until the pointer shows itself off
+  // the card (SPEC_CARD_STATES.md, С7.8; user's decision of 16.11.2026).
+  const [menuHeldSlug, setMenuHeldSlug] = useState<string | null>(null);
+  const [cardPointMenuOpen, setCardPointMenuOpen] = useState(false);
+  const [selectionPointMenuOpen, setSelectionPointMenuOpen] = useState(false);
+  const pointMenuOpen = cardPointMenuOpen || selectionPointMenuOpen;
+  useEffect(() => {
+    if (menuHeldSlug === null || pointMenuOpen) return;
+    return onPointerOffMenus((event) => {
+      const under = event.target instanceof Element ? event.target.closest("[data-block-slug]") : null;
+      if (under?.getAttribute("data-block-slug") !== menuHeldSlug) setMenuHeldSlug(null);
+    });
+  }, [menuHeldSlug, pointMenuOpen]);
   const lastRestoreFocusSequenceRef = useRef(0);
   const lastPointerPositionRef = useRef<FeedPointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<FeedPointerPosition | null>(null);
@@ -965,13 +954,17 @@ export function Grid({
     [blocks, show, wordWidthsMap],
   );
 
+  // The feed's cards by id and by slug, grown out of the index of the list
+  // before (src/components/grid/feedIndex.ts).
+  const feedIndexRef = useRef<FeedIndex | null>(null);
+  const feedIndex = useMemo(() => indexFeed(blocks, feedIndexRef.current), [blocks]);
+  feedIndexRef.current = feedIndex;
   // Every card of the feed. While all of them can render it is the set of
   // the render-ready ones itself, the same object whatever else changes.
-  const allBlockIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const block of blocks) ids.add(block.id);
-    return ids;
-  }, [blocks]);
+  const allBlockIds = feedIndex.ids;
+  const blocksBySlug = feedIndex.bySlug;
+  const blocksBySlugRef = useRef(blocksBySlug);
+  blocksBySlugRef.current = blocksBySlug;
   const renderReadyBlockIds = useMemo(() => {
     if (parentWidth <= 0) return NO_BLOCK_IDS;
     if (wordMetricsSettled || allBlocksHaveExactHeights) return allBlockIds;
@@ -1167,9 +1160,10 @@ export function Grid({
       show,
       blocks,
       layout,
+      wordWidths: wordWidthsMap,
       exact: allCurrentGenerationDeterministic,
     };
-  }, [allCurrentGenerationDeterministic, blocks, columns, layout, layoutGap, layoutMovesSmoothly, parentWidth, routeKey, routeSnapshotReady, show]);
+  }, [allCurrentGenerationDeterministic, blocks, columns, layout, layoutGap, layoutMovesSmoothly, parentWidth, routeKey, routeSnapshotReady, show, wordWidthsMap]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1335,14 +1329,6 @@ export function Grid({
     spaceOnboardingOwed === false,
   );
 
-  const blocksBySlug = useMemo(() => {
-    const bySlug = new Map<string, LightBlock>();
-    for (const block of blocks) bySlug.set(block.slug, block);
-    return bySlug;
-  }, [blocks]);
-  const blocksBySlugRef = useRef(blocksBySlug);
-  blocksBySlugRef.current = blocksBySlug;
-
   useLayoutEffect(() => {
     const scrollElement = parentRef.current;
     const previous = scrollAnchorSnapshotRef.current;
@@ -1499,6 +1485,8 @@ export function Grid({
   const autoplayEligibleBySlug = useMemo(() => {
     const eligible = new Map<string, ReturnType<typeof normalizeFeedPlayback>>();
     for (const block of blocks) {
+      // Most cards have no playback: nothing is asked of them.
+      if (!block.feed_playback) continue;
       const playback = normalizeFeedPlayback(block.feed_playback);
       if (playback) {
         eligible.set(block.slug, playback);
@@ -2486,48 +2474,24 @@ export function Grid({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      // The menu is asked for here, in the click's handler: the page's own
+      // context menu never opens, on a card or off one.
+      e.preventDefault();
       const el = (e.target as HTMLElement).closest("[data-block-slug]");
-      if (!el) {
-        e.preventDefault();
-        return;
-      }
+      if (!el) return;
       const slug = el.getAttribute("data-block-slug")!;
+      const point = { x: e.clientX, y: e.clientY };
+      setMenuHeldSlug(slug);
       // Right-clicking a card that is part of the selection addresses the whole
       // selection, the way Finder does. Right-clicking outside it stays a
       // single-card menu and leaves the selection alone.
       if (selectedSlugs.has(slug)) {
-        setContextMenuScope("selection");
+        cardPointMenuRef.current?.close();
+        selectionPointMenuRef.current?.open(point);
         return;
       }
       const block = blocksBySlug.get(slug);
-      if (block && menuPanelUsable()) {
-        // The menu opens in the panel, asked for here, before React draws:
-        // the page's context menu does not open.
-        e.preventDefault();
-        panelPointSequenceRef.current += 1;
-        const sequence = panelPointSequenceRef.current;
-        const session = startCardMenuPanel(
-          () => ({ ...panelCardRef.current, block }),
-          {
-            anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
-            opener: CARD_POINT_OPENER,
-            byKey: false,
-            eventAt: performance.timeOrigin + e.timeStamp,
-            contextMenu: true,
-          },
-          {
-            onClosed: () => setPanelPointMenu((menu) => (menu?.sequence === sequence ? null : menu)),
-            onRefused: () => setPanelPointMenu((menu) => (menu?.sequence === sequence ? { ...menu, onPage: true } : menu)),
-          },
-        );
-        panelPointSessionRef.current = session;
-        setPanelPointMenu({ block, session, x: e.clientX, y: e.clientY, onPage: false, sequence });
-      } else if (block) {
-        setContextMenuScope("card");
-        setMenuBlock(block);
-      } else {
-        e.preventDefault();
-      }
+      if (block) cardPointMenuRef.current?.open(block, point);
     },
     [blocksBySlug, selectedSlugs],
   );
@@ -2609,6 +2573,7 @@ export function Grid({
       gridTopInset,
       focusedSlug: keyboardFocusedSlug,
       pinnedActionMenuSlug,
+      menuHeldSlug,
       selectedSlugs,
       selectedBlocks,
       actionMenuRequest,
@@ -2639,6 +2604,7 @@ export function Grid({
       gridTopInset,
       keyboardFocusedSlug,
       pinnedActionMenuSlug,
+      menuHeldSlug,
       selectedSlugs,
       selectedBlocks,
       actionMenuRequest,
@@ -2680,163 +2646,140 @@ export function Grid({
     {/* An open right-click menu holds the pointer's answers like the card's
         own menus do (С7.8, useHoverIntent): the card under it drops its hover
         and its lift at once, though WebKit keeps `:hover` until the pointer
-        moves. */}
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          ref={parentRef}
-          onContextMenu={handleContextMenu}
-          onPointerDown={handleGridPointerDown}
-          onPointerMove={(event) => {
-            handleIntentPointerMove(event);
-            handleGridPointerMove(event);
-          }}
-          // A menu going away from over a still pointer: WebKit names what is
-          // under it now with this event alone, with no `pointermove` (С7.8).
-          onPointerOver={handleIntentPointerMove}
-          onPointerLeave={handleIntentPointerLeave}
-          onPointerUp={finishMarqueeSelection}
-          onPointerCancel={finishMarqueeSelection}
-          className="h-full overflow-x-hidden overflow-y-auto pb-8"
-          style={{
-            paddingLeft: gridXInset,
-            paddingRight: gridXInset,
-            scrollbarGutter: "stable",
-            transition: FEED_INSET_TRANSITION,
-          }}
-          data-grid-scroll
-          data-feed-grid-interaction-mode={feedInteractionMode}
-          data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
-        >
-          <HoverIntentDragWatch intent={cardIntent} />
-          {parentWidth > 0 && blocks.length > 0 && (
-            <VirtualMasonryLayout
-              blocks={blocks}
-              visibleItems={visibleItems}
-              totalHeight={layout.totalHeight}
-              priorityBounds={priorityBounds}
-              liveBlockIds={renderReadyBlockIds}
-              activePlaybackSlugs={activePlaybackSlugs}
-              thumbVersions={thumbVersions}
-              marqueeRect={marqueeRect}
-              context={gridContext}
-            />
-          )}
-          {parentWidth > 0 && showEmptyChannelPlaceholder && (
-            <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
-          )}
-          {parentWidth > 0 && showEmptyFeedPlaceholder && (
-            <EmptyChannelPlaceholder
-              viewportHeight={viewportHeight}
-              text={EMPTY_FEED_PLACEHOLDER_TEXT}
-            />
-          )}
-          {parentWidth > 0 && showEmptySpaceOnboarding && (
-            <EmptySpaceOnboarding
-              viewportHeight={viewportHeight}
-              onInstallClipper={onInstallClipper!}
-            />
-          )}
-          {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (
-            <MeasurementPass
-              blocks={heightDriftAuditBatch}
-              columnWidth={deriveColumnWidth(parentWidth, layoutGap)}
-              vaultPath={vaultPath}
-              thumbsRootPath={resolvedThumbsRootPath}
-              onMeasured={publishHeightDriftReport}
-            />
-          )}
-        </div>
-      </ContextMenuTrigger>
-
-      {/* The selection's commands render in the secondary chrome row — the
-          selection itself stays owned here, presentation moves. Without a host
-          (unit renders) the row mounts in place. */}
-      {!blockDragActive && (() => {
-        const commands = (
-          <GroupSelectionCommands
-            selectedBlocks={selectedBlocks}
-            tags={tags}
-            currentTag={currentTag}
-            onLoadBlockTags={onLoadBlockTags}
-            onBatchSetTag={onBatchSetTag}
-            onCreateAndAssignBatch={onCreateAndAssignBatch}
-            onRequestDeleteSelection={requestDeleteSelection}
-            onMergeSelectedBlocks={openMergeDialog}
-            onClearSelection={clearSelection}
-          />
-        );
-        return selectionCommandsHost
-          ? createPortal(commands, selectionCommandsHost)
-          : commands;
-      })()}
-
-      {/* The feed's one group delete window, one instance per request. */}
-      {deleteSelection && (
-        <DeleteSelectionWindow
-          key={deleteSelection.request.sequence}
-          open={deleteSelection.open}
-          slugs={deleteSelection.request.slugs}
-          vaultPath={vaultPath}
-          thumbsRootPath={resolvedThumbsRootPath}
-          onPrepare={onPrepareDeleteSelectedBlocks}
-          onDelete={onDeleteSelectedBlocks}
-          onClose={closeDeleteSelection}
-          onDeleted={handleSelectionDeleted}
+        moves. Its owners below report it (src/lib/openMenus.ts). */}
+    <div
+      ref={parentRef}
+      onContextMenu={handleContextMenu}
+      onPointerDown={handleGridPointerDown}
+      onPointerMove={(event) => {
+        handleIntentPointerMove(event);
+        handleGridPointerMove(event);
+      }}
+      // A menu going away from over a still pointer: WebKit names what is
+      // under it now with this event alone, with no `pointermove` (С7.8).
+      onPointerOver={handleIntentPointerMove}
+      onPointerLeave={handleIntentPointerLeave}
+      onPointerUp={finishMarqueeSelection}
+      onPointerCancel={finishMarqueeSelection}
+      className="h-full overflow-x-hidden overflow-y-auto pb-8"
+      style={{
+        paddingLeft: gridXInset,
+        paddingRight: gridXInset,
+        scrollbarGutter: "stable",
+        transition: FEED_INSET_TRANSITION,
+      }}
+      data-grid-scroll
+      data-feed-grid-interaction-mode={feedInteractionMode}
+      data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
+    >
+      <HoverIntentDragWatch intent={cardIntent} />
+      {parentWidth > 0 && blocks.length > 0 && (
+        <VirtualMasonryLayout
+          blocks={blocks}
+          visibleItems={visibleItems}
+          totalHeight={layout.totalHeight}
+          priorityBounds={priorityBounds}
+          liveBlockIds={renderReadyBlockIds}
+          activePlaybackSlugs={activePlaybackSlugs}
+          thumbVersions={thumbVersions}
+          marqueeRect={marqueeRect}
+          context={gridContext}
         />
       )}
+      {parentWidth > 0 && showEmptyChannelPlaceholder && (
+        <EmptyChannelPlaceholder viewportHeight={viewportHeight} />
+      )}
+      {parentWidth > 0 && showEmptyFeedPlaceholder && (
+        <EmptyChannelPlaceholder
+          viewportHeight={viewportHeight}
+          text={EMPTY_FEED_PLACEHOLDER_TEXT}
+        />
+      )}
+      {parentWidth > 0 && showEmptySpaceOnboarding && (
+        <EmptySpaceOnboarding
+          viewportHeight={viewportHeight}
+          onInstallClipper={onInstallClipper!}
+        />
+      )}
+      {parentWidth > 0 && heightDriftAuditBatch.length > 0 && (
+        <MeasurementPass
+          blocks={heightDriftAuditBatch}
+          columnWidth={deriveColumnWidth(parentWidth, layoutGap)}
+          vaultPath={vaultPath}
+          thumbsRootPath={resolvedThumbsRootPath}
+          onMeasured={publishHeightDriftReport}
+        />
+      )}
+    </div>
 
-      <MergeCardsDialog
-        open={mergeDialogOpen}
-        selectedBlocks={selectedBlocks}
-        thumbsRootPath={resolvedThumbsRootPath}
-        onOpenChange={setMergeDialogOpen}
-        onConfirm={handleConfirmMerge}
-      />
-
-      {contextMenuScope === "selection" && selectedBlocks.length > 0 ? (
-        <GroupSelectionContextMenu
+    {/* The selection's commands render in the secondary chrome row — the
+        selection itself stays owned here, presentation moves. Without a host
+        (unit renders) the row mounts in place. */}
+    {!blockDragActive && (() => {
+      const commands = (
+        <GroupSelectionCommands
           selectedBlocks={selectedBlocks}
           tags={tags}
           currentTag={currentTag}
           onLoadBlockTags={onLoadBlockTags}
           onBatchSetTag={onBatchSetTag}
           onCreateAndAssignBatch={onCreateAndAssignBatch}
-          onRequestDeleteSelected={requestDeleteSelection}
+          onRequestDeleteSelection={requestDeleteSelection}
           onMergeSelectedBlocks={openMergeDialog}
           onClearSelection={clearSelection}
         />
-      ) : menuBlock ? (
-        <CardTagMenu
-          block={menuBlock}
-          vaultPath={vaultPath}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={onToggleTag}
-          onCreateAndAssign={onCreateAndAssign}
-          onRequestRename={onRequestRename}
-          onRequestDelete={onRequestDelete}
-        />
-      ) : null}
-    </ContextMenu>
-    {panelPointMenu && (
-      <CardPanelPointMenu
-        key={panelPointMenu.sequence}
-        block={panelPointMenu.block}
+      );
+      return selectionCommandsHost
+        ? createPortal(commands, selectionCommandsHost)
+        : commands;
+    })()}
+
+    {/* The feed's one group delete window, one instance per request. */}
+    {deleteSelection && (
+      <DeleteSelectionWindow
+        key={deleteSelection.request.sequence}
+        open={deleteSelection.open}
+        slugs={deleteSelection.request.slugs}
         vaultPath={vaultPath}
-        tags={tags}
-        currentTag={currentTag}
-        onToggleTag={onToggleTag}
-        onCreateAndAssign={onCreateAndAssign}
-        onRequestRename={onRequestRename}
-        onRequestDelete={onRequestDelete}
-        session={panelPointMenu.session}
-        onPage={panelPointMenu.onPage}
-        x={panelPointMenu.x}
-        y={panelPointMenu.y}
-        onClose={() => setPanelPointMenu(null)}
+        thumbsRootPath={resolvedThumbsRootPath}
+        onPrepare={onPrepareDeleteSelectedBlocks}
+        onDelete={onDeleteSelectedBlocks}
+        onClose={closeDeleteSelection}
+        onDeleted={handleSelectionDeleted}
       />
     )}
+
+    <MergeCardsDialog
+      open={mergeDialogOpen}
+      selectedBlocks={selectedBlocks}
+      thumbsRootPath={resolvedThumbsRootPath}
+      onOpenChange={setMergeDialogOpen}
+      onConfirm={handleConfirmMerge}
+    />
+    <GroupSelectionPointMenuHost
+      handleRef={selectionPointMenuRef}
+      onOpenChange={setSelectionPointMenuOpen}
+      selectedBlocks={selectedBlocks}
+      tags={tags}
+      currentTag={currentTag}
+      onLoadBlockTags={onLoadBlockTags}
+      onBatchSetTag={onBatchSetTag}
+      onCreateAndAssignBatch={onCreateAndAssignBatch}
+      onRequestDeleteSelection={requestDeleteSelection}
+      onMergeSelectedBlocks={openMergeDialog}
+      onClearSelection={clearSelection}
+    />
+    <CardPointMenuHost
+      handleRef={cardPointMenuRef}
+      onOpenChange={setCardPointMenuOpen}
+      vaultPath={vaultPath}
+      tags={tags}
+      currentTag={currentTag}
+      onToggleTag={onToggleTag}
+      onCreateAndAssign={onCreateAndAssign}
+      onRequestRename={onRequestRename}
+      onRequestDelete={onRequestDelete}
+    />
     </div>
     </CardCollectionsContext.Provider>
     </CardColumnWidthContext.Provider>
@@ -3027,6 +2970,7 @@ const GridItem = memo(function GridItem({
             allowPlayback={allowPlayback}
             openMoreMenuRequestSequence={openMoreMenuRequestSequence}
             hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
+            menuHeld={block.slug === context.menuHeldSlug}
             hoverArmed={hoverArmed}
             menuBadge={isFocused ? (context.selectedSlugs.size > 0 ? "batch-menu" : "element-menu") : null}
             keyboardLift={isFocused && !isSelected}

@@ -14,6 +14,10 @@ function findDroppableContainer(
   )) ?? null;
 }
 
+/** The sidebar's filter as a drop target: what is dropped on it founds an
+ *  untitled collection (decision of 16.11.2026; SidebarSearchDropTarget.tsx). */
+export const SIDEBAR_SEARCH_DROP_ID = "sidebar-search";
+
 export function sidebarDropIdFromPoint(
   pointerCoordinates: { x: number; y: number } | null,
 ): string | null {
@@ -22,11 +26,12 @@ export function sidebarDropIdFromPoint(
   }
 
   for (const element of document.elementsFromPoint(pointerCoordinates.x, pointerCoordinates.y)) {
+    if (element.closest("[data-sidebar-search-drop]")) return SIDEBAR_SEARCH_DROP_ID;
     const row = element.closest<HTMLElement>("[data-sidebar-row]");
     if (!row) continue;
 
     const rowKey = row.dataset.sidebarRowKey ?? null;
-    if (rowKey === "create-channel" || rowKey?.startsWith("tag:")) {
+    if (rowKey?.startsWith("tag:")) {
       return rowKey;
     }
 

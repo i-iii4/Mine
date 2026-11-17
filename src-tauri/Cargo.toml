@@ -59,7 +59,7 @@ semver = "1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 
 # Database
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.33", features = ["bundled", "hooks"] }
 
 # File system
 notify = { version = "8", optional = true }
@@ -117,8 +117,15 @@ fastembed = "5"
 # deliberate flick from the sideways drift of a vertical scroll. AppKit knows
 # all three, so the gesture is recognised here and handed to the interface as a
 # decision rather than as numbers to guess from.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# The outside window's test makes its window as Tauri does, with tao
+# (tests/outside_window.rs); the same version and features as Tauri's.
+tao = { version = "0.34", default-features = false, features = ["rwh_06"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
+# `exception`: the menu panel catches what AppKit throws while its window is
+# made, so a failure leaves the menus on the page (SPEC_MENU_WINDOW.md, МО62).
+objc2 = { version = "0.6", features = ["exception"] }
 objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSResponder", "NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = "0.3"
 block2 = "0.6"
@@ -176,6 +183,22 @@ required-features = ["tooling"]
 name = "export-bindings"
 path = "src/tooling/export_bindings.rs"
 required-features = ["desktop", "tooling"]
+
+# The menu panel's window on real AppKit objects (SPEC_MENU_WINDOW.md, МО62а).
+# No standard harness: AppKit makes a window on the process's main thread
+# only, and the harness runs tests on other threads.
+[[test]]
+name = "menu_panel_window"
+path = "tests/menu_panel_window.rs"
+harness = false
+required-features = ["desktop"]
+
+# Real AppKit windows on the process's main thread, as the menu panel's test.
+[[test]]
+name = "outside_window"
+path = "tests/outside_window.rs"
+harness = false
+required-features = ["desktop"]
 
 [dev-dependencies]
 indoc = "2"

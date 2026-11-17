@@ -107,9 +107,9 @@ export function MainSecondaryTopBar({
   nameFieldRef?: Ref<ChromeNameFieldHandle>;
   onRequestDelete: (slug: string) => void;
   onDetailClose: () => void;
-  /// Chooses «Card view: Peek» and gives the open card to its window
+  /// Chooses «Element view: Peek» and gives the open card to its window
   /// (SPEC_CARD_PEEK.md, О9, О16): offered while the right part holds the
-  /// window, whatever «Card view» was, else absent.
+  /// window, whatever «Element view» was, else absent.
   onDetailCollapse?: () => void;
   detailMenuOpenRequestSequence: number;
   /// A group selection exists: its commands take this half over.

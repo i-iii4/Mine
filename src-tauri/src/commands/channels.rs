@@ -143,13 +143,51 @@ fn create_channel_unannounced(
 /// [`create_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
-pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<ChannelDto, CommandError> {
+pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<super::effects::Changed<ChannelDto>, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = create_channel_unannounced(webview, state, tag);
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
+    outcome.map(|value| announcing.answer(value, Vec::new()))
+}
+
+/// The name of a collection made with none typed (decisions of 16.11.2026:
+/// the sidebar's `+` with an empty filter, a card dropped on the filter).
+pub const UNTITLED_COLLECTION_NAME: &str = "Untitled Collection";
+
+/// The first free untitled name, by the project's rule for a taken name
+/// (`resolve_slug_conflict`, SPEC_DOMAIN.md, V5–V8): `Untitled Collection`,
+/// then `Untitled Collection (2)`, `(3)` and so on, the lowest free number
+/// first, up to `(1000)`.
+fn untitled_collection_name(conn: &rusqlite::Connection, vault: &VaultLayout) -> Result<String, CommandError> {
+    for n in 1..=1000 {
+        let candidate = if n == 1 { UNTITLED_COLLECTION_NAME.to_string() } else { format!("{UNTITLED_COLLECTION_NAME} ({n})") };
+        match new_collection_name(conn, vault, &candidate) {
+            Ok(name) => return Ok(name),
+            Err(CommandError::NameRefused(_)) => {}
+            Err(error) => return Err(error),
+        }
     }
-    outcome
+    Err(CommandError::NameRefused(format!("Every name from \"{UNTITLED_COLLECTION_NAME}\" to \"{UNTITLED_COLLECTION_NAME} (1000)\" is taken.")))
+}
+
+fn create_untitled_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState>) -> Result<ChannelDto, CommandError> {
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    let vault = files::layout_for_new_files(&vs.vault)?;
+    let name = untitled_collection_name(&vs.conn, &vault)?;
+    create_channel_inner(&vs.conn, &vault, &name)
+}
+
+/// A collection with the first free untitled name (`untitled_collection_name`),
+/// then the other tabs of the space hear of it, as after `create_channel`.
+#[tauri::command(async)]
+pub fn create_untitled_channel(webview: tauri::Webview, state: State<'_, AppState>) -> Result<super::effects::Changed<ChannelDto>, CommandError> {
+    let announcing = super::effects::ChangeNews::before(&webview);
+    let outcome = create_untitled_channel_unannounced(webview, state);
+    outcome.map(|value| announcing.answer(value, Vec::new()))
 }
 
 /// Whether a collection may be named `new_tag`: renamed from `old_tag`, or
@@ -407,16 +445,15 @@ fn rename_channel_unannounced(
 /// [`rename_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
-pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<ChannelDto, CommandError> {
+pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<super::effects::Changed<ChannelDto>, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let renamed_from = old_tag.clone();
     let outcome = rename_channel_unannounced(webview, state, old_tag, new_tag);
-    if let Ok(renamed) = &outcome {
+    outcome.map(|renamed| {
         // The name the collection took, as normalized, not as typed.
-        announcing.send(vec![super::effects::SpaceRename::collection(&renamed_from, &renamed.tag)],
-        );
-    }
-    outcome
+        let renames = vec![super::effects::SpaceRename::collection(&renamed_from, &renamed.tag)];
+        announcing.answer(renamed, renames)
+    })
 }
 
 /// Rename the collection `old_tag` to `new_tag`. The index is brought up to
@@ -959,13 +996,10 @@ fn delete_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState
 /// [`delete_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
-pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<CollectionDeleted, CommandError> {
+pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<super::effects::Changed<CollectionDeleted>, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_channel_unannounced(webview, state, tag);
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-    }
-    outcome
+    outcome.map(|value| announcing.answer(value, Vec::new()))
 }
 
 /// The one deletion of a collection the app, the CLI and the MCP run. The
@@ -1967,6 +2001,31 @@ mod tests {
             serde_json::to_value(&error).unwrap(),
             serde_json::json!({ "kind": "name_refused", "message": "The name is empty." })
         );
+    }
+
+    /// 16.11.2026: a collection made with no name typed takes the first
+    /// free untitled name by the project's rule for a taken name: none, then
+    /// (2), (3), the lowest free number first; letter case and a note of the
+    /// name elsewhere count as taken, as for any new collection.
+    #[test]
+    fn an_untitled_collection_takes_the_first_free_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        let untitled = || {
+            let name = untitled_collection_name(&vs.conn, &vs.vault).unwrap();
+            create_channel_inner(&vs.conn, &vs.vault, &name).unwrap().tag
+        };
+        assert_eq!(untitled(), "Untitled Collection");
+        assert_eq!(untitled(), "Untitled Collection (2)");
+        assert_eq!(untitled(), "Untitled Collection (3)");
+        // A gap is filled first.
+        delete_channel_inner(None, &vs.conn, &vs.vault, "Untitled Collection (2)").unwrap();
+        assert_eq!(untitled(), "Untitled Collection (2)");
+        assert_eq!(untitled(), "Untitled Collection (4)");
     }
 
     /// 05.10.2026: a new collection's name follows the card's rules and is

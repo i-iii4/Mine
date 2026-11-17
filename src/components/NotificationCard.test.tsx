@@ -65,8 +65,8 @@ describe("NotificationAnchor", () => {
     const anchor = container.querySelector("[data-notification-anchor]");
     expect(anchor).toHaveClass(
       "fixed",
-      "right-[var(--edge-rhythm,32px)]",
-      "bottom-[var(--notification-bottom,var(--edge-rhythm,32px))]",
+      "right-[var(--shell-rhythm)]",
+      "bottom-[var(--notification-bottom,var(--shell-rhythm))]",
     );
   });
 });

@@ -7,8 +7,8 @@ import {
   type InvokeOptions,
 } from "@tauri-apps/api/core";
 import type {
-  CardBarDrop,
-  CardDragHover,
+  CardDragBegin,
+  CardDragUpdate,
   SidebarLayout,
   SidebarOverlay,
   TabBarState,
@@ -78,7 +78,12 @@ import type {
   VaultConflictError,
   CloudRecommendationState,
   UpdateStatus,
+  Changed,
+  FeedPageToken,
+  FeedPatch,
+  FeedReadReason,
 } from "@/types";
+import { noteOwnFeedChange, noteOwnFeedChangeFailed } from "./feedChanges";
 import { createSelectionStamps } from "./spaceSelection";
 import { NO_SPACE_OPEN_TEXT } from "./mediaAssetErrors";
 
@@ -99,6 +104,7 @@ function isCommandError(error: unknown): error is CommandError {
     || kind === "frontmatter_not_writable"
     || kind === "space_identity_unreadable"
     || kind === "name_refused"
+    || kind === "search_superseded"
     || kind === "internal";
 }
 
@@ -139,6 +145,10 @@ function commandErrorMessage(error: CommandError): string {
       return `Mine cannot read the identity file of “${noteName(error.message.path)}”, so it did not open the space and changed nothing. Check access to the folder, or wait until iCloud downloads it.`;
     case "collection_not_found":
       return `Collection “${error.message.collection}” has no page; nothing was written.`;
+    case "search_superseded":
+      // The overlay has dropped the request this answers and never shows it
+      // (SPEC_SEARCH.md, «Отмена устаревшего запроса»).
+      return "the search was superseded by a newer one";
     case "name_refused":
     case "internal":
       return error.message;
@@ -160,6 +170,23 @@ async function invoke<T>(
     }
     throw error;
   }
+}
+
+/** The answer of a command that changes a space. The cards it names go to
+ *  the page's journal, and the page reads those rows instead of its whole
+ *  feed when it refreshes after the command (SPEC_FRONTEND.md, «Обновление
+ *  ленты»). A command that failed may have written a part: the journal then
+ *  says the cards are not known, and the feed is read in full. */
+async function changed<T>(answer: Promise<Changed<T>>): Promise<T> {
+  let answered: Changed<T>;
+  try {
+    answered = await answer;
+  } catch (error) {
+    noteOwnFeedChangeFailed();
+    throw error;
+  }
+  noteOwnFeedChange(answered.cards);
+  return answered.value;
 }
 
 // Vault
@@ -233,20 +260,38 @@ export const setArticleAudioPosition = (
   });
 
 // Blocks
-export const getGridRows = (path: string, slugs: string[]) =>
-  invoke<import("@/types").GridRowsSnapshot>("get_grid_rows", { path, slugs });
+/** The cards the page knows changed, as the feed of `location` holds them
+ *  now: the partial path of the feed's update (SPEC_FRONTEND.md, «Обновление
+ *  ленты»). `cards` are `blocks.id`; `end` is the last card of the page's
+ *  list that is not among them, `null` when the list holds the whole feed.
+ *  `reason` goes to the read's line in `Mine.log`. */
+export const readFeedChanges = (
+  path: string,
+  location: TabLocation,
+  order: FeedOrder,
+  cards: number[],
+  end: number | null,
+  reason: FeedReadReason,
+) =>
+  invoke<FeedPatch>("read_feed_changes", { path, location, order, cards, end, reason });
 
+/** A page of the feed of `location`: `limit` cards after the place `after`
+ *  names, or the feed's first cards when it is `null` (SPEC_STORAGE.md,
+ *  «Страница ленты по ключу»). `reason`: why the page reads, for the read's
+ *  line in `Mine.log`. */
 export const listGridBlocks = (
   location: TabLocation,
-  offset?: number,
+  after: FeedPageToken | null,
   limit?: number,
   order?: FeedOrder,
+  reason?: FeedReadReason,
 ) =>
   invoke<GridSnapshot>("list_grid_blocks", {
     location,
-    offset: offset ?? null,
+    after,
     limit: limit ?? null,
     order: order ?? null,
+    reason: reason ?? null,
   });
 
 /** The open card's associations (SPEC_CARD_ASSOCIATIONS.md): `exclude_slugs`
@@ -286,7 +331,7 @@ export const suggestNoteLinks = (sourceSlug: string, query: NoteLinkQuery) =>
   invoke<NoteLinkSuggestion[]>("suggest_note_links", { sourceSlug, query });
 
 export const createBlock = (params: CreateBlockParams) =>
-  invoke<IndexedBlock>("create_block", { params });
+  changed(invoke<Changed<IndexedBlock>>("create_block", { params }));
 
 export const readClipboardPayload = () =>
   invoke<ClipboardPayload>("read_clipboard_payload");
@@ -315,7 +360,7 @@ function normalizeMediaAssetActionError(error: unknown): MediaAssetActionError {
 
 export const createMediaAssetCard = async (params: CreateMediaAssetCardParams) => {
   try {
-    return await tauriInvoke<IndexedBlock>("create_media_asset_card", { params });
+    return await changed(tauriInvoke<Changed<IndexedBlock>>("create_media_asset_card", { params }));
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -323,7 +368,7 @@ export const createMediaAssetCard = async (params: CreateMediaAssetCardParams) =
 
 export const renameMediaAsset = async (params: RenameMediaAssetParams) => {
   try {
-    return await tauriInvoke<MediaAssetMutationResult>("rename_media_asset", { params });
+    return await changed(tauriInvoke<Changed<MediaAssetMutationResult>>("rename_media_asset", { params }));
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -339,7 +384,7 @@ export const prepareDeleteMediaAsset = async (media_ref: string) => {
 
 export const deleteMediaAsset = async (media_ref: string) => {
   try {
-    return await tauriInvoke<MediaAssetMutationResult>("delete_media_asset", { media_ref });
+    return await changed(tauriInvoke<Changed<MediaAssetMutationResult>>("delete_media_asset", { media_ref }));
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -349,7 +394,7 @@ export const deleteMediaAsset = async (media_ref: string) => {
  *  See SPEC_MEDIA_ASSET_ACTIONS.md «Меню видео источника». */
 export const deleteSourceVideo = async (slug: string) => {
   try {
-    return await tauriInvoke<MediaAssetMutationResult>("delete_source_video", { slug });
+    return await changed(tauriInvoke<Changed<MediaAssetMutationResult>>("delete_source_video", { slug }));
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -357,7 +402,7 @@ export const deleteSourceVideo = async (slug: string) => {
 
 export const removeMediaAssetFromCard = async (params: RemoveMediaAssetFromCardParams) => {
   try {
-    return await tauriInvoke<MediaAssetMutationResult>("remove_media_asset_from_card", { params });
+    return await changed(tauriInvoke<Changed<MediaAssetMutationResult>>("remove_media_asset_from_card", { params }));
   } catch (error) {
     throw normalizeMediaAssetActionError(error);
   }
@@ -386,7 +431,7 @@ function normalizeTextSelectionExtractError(error: unknown): TextSelectionExtrac
 
 export const extractTextSelection = async (params: ExtractTextSelectionParams) => {
   try {
-    return await tauriInvoke<IndexedBlock>("extract_text_selection", { params });
+    return await changed(tauriInvoke<Changed<IndexedBlock>>("extract_text_selection", { params }));
   } catch (error) {
     throw normalizeTextSelectionExtractError(error);
   }
@@ -394,7 +439,7 @@ export const extractTextSelection = async (params: ExtractTextSelectionParams) =
 
 export const deleteTextSelection = async (params: DeleteTextSelectionParams) => {
   try {
-    return await tauriInvoke<IndexedBlock>("delete_text_selection", { params });
+    return await changed(tauriInvoke<Changed<IndexedBlock>>("delete_text_selection", { params }));
   } catch (error) {
     throw normalizeTextSelectionExtractError(error);
   }
@@ -418,7 +463,7 @@ function normalizeTaskToggleError(error: unknown): TaskToggleError {
  *  with a `TaskToggleError`. */
 export const toggleTaskItem = async (params: ToggleTaskItemParams) => {
   try {
-    return await tauriInvoke<IndexedBlock>("toggle_task_item", { params });
+    return await changed(tauriInvoke<Changed<IndexedBlock>>("toggle_task_item", { params }));
   } catch (error) {
     throw normalizeTaskToggleError(error);
   }
@@ -502,7 +547,7 @@ function normalizeRenameBlockError(error: unknown): RenameBlockError {
 
 export const renameBlockFile = async (old_slug: string, new_stem: string) => {
   try {
-    return await tauriInvoke<RenameBlockResult>("rename_block_file", { old_slug, new_stem });
+    return await changed(tauriInvoke<Changed<RenameBlockResult>>("rename_block_file", { old_slug, new_stem }));
   } catch (error) {
     throw normalizeRenameBlockError(error);
   }
@@ -541,7 +586,7 @@ export const deleteBlocks = (
   delete_unused_media: boolean,
   offered_media?: string[],
 ) =>
-  invoke<DeleteBlocksOutcome>("delete_blocks", { slugs, delete_unused_media, offered_media });
+  changed(invoke<Changed<DeleteBlocksOutcome>>("delete_blocks", { slugs, delete_unused_media, offered_media }));
 
 /** Delete one card; with its media, the files are checked against the notes
  *  on disk first, and `kept_media` names the ones another note uses.
@@ -551,10 +596,10 @@ export const deleteBlock = (
   delete_unused_media?: boolean,
   offered_media?: string[],
 ) =>
-  invoke<DeleteBlockOutcome>(
+  changed(invoke<Changed<DeleteBlockOutcome>>(
     "delete_block",
     delete_unused_media === undefined ? { slug } : { slug, delete_unused_media, offered_media },
-  );
+  ));
 
 function normalizeMergeBlocksError(error: unknown): MergeBlocksError {
   if (error && typeof error === "object" && "kind" in error) {
@@ -571,7 +616,7 @@ function normalizeMergeBlocksError(error: unknown): MergeBlocksError {
 
 export const mergeBlocks = async (ordered_slugs: string[]) => {
   try {
-    return await tauriInvoke<MergeBlocksResult>("merge_blocks", { ordered_slugs });
+    return await changed(tauriInvoke<Changed<MergeBlocksResult>>("merge_blocks", { ordered_slugs }));
   } catch (error) {
     throw normalizeMergeBlocksError(error);
   }
@@ -579,19 +624,19 @@ export const mergeBlocks = async (ordered_slugs: string[]) => {
 
 // Tags
 export const addTag = (slug: string, tag: string) =>
-  invoke<void>("add_tag", { slug, tag });
+  changed(invoke<Changed<null>>("add_tag", { slug, tag })).then(() => undefined);
 
 export const removeTag = (slug: string, tag: string) =>
-  invoke<void>("remove_tag", { slug, tag });
+  changed(invoke<Changed<null>>("remove_tag", { slug, tag })).then(() => undefined);
 
 /** Connect every card of `slugs` to the collection `tag`, or disconnect them
  *  all, in one source mutation: all of them change or none does
  *  (SPEC_DEEP_AUDIT.md, Е6.1). */
 export const setBlocksMembership = (slugs: string[], tag: string, connected: boolean) =>
-  invoke<void>("set_blocks_membership", { slugs, tag, connected });
+  changed(invoke<Changed<null>>("set_blocks_membership", { slugs, tag, connected })).then(() => undefined);
 
 export const renameChannel = (old_tag: string, new_tag: string) =>
-  invoke<import("@/types").ChannelDto>("rename_channel", { old_tag, new_tag });
+  changed(invoke<Changed<ChannelDto>>("rename_channel", { old_tag, new_tag }));
 
 /** Why a collection could not be called `new_tag` (renamed from `old_tag`,
  *  or created when it is null), or null when it could; writes nothing. A
@@ -618,7 +663,12 @@ export const listTaxonomySnapshot = () =>
   invoke<TaxonomySnapshot>("list_taxonomy_snapshot");
 
 export const createChannel = (tag: string) =>
-  invoke<ChannelDto>("create_channel", { tag });
+  changed(invoke<Changed<ChannelDto>>("create_channel", { tag }));
+
+/** A collection with the first free untitled name: `Untitled Collection`,
+ *  then `Untitled Collection (2)` and on (decision of 16.11.2026). */
+export const createUntitledChannel = () =>
+  changed(invoke<Changed<ChannelDto>>("create_untitled_channel"));
 
 export const reorderChannels = (items: { tag: string; position: number }[]) =>
   invoke<void>("reorder_channels", { items });
@@ -627,7 +677,7 @@ export const reorderChannels = (items: { tag: string; position: number }[]) =>
  *  card and its page goes to the Trash (SPEC_DEEP_AUDIT.md, Н2). The cards
  *  it could not change are in `kept_links`. */
 export const deleteChannel = (tag: string) =>
-  invoke<CollectionDeleted>("delete_channel", { tag });
+  changed(invoke<Changed<CollectionDeleted>>("delete_channel", { tag }));
 
 /** Every card with a thumbnail per collection and under `__all__`, the whole
  *  list (SPEC_SIDEBAR_STRIP.md, ЛМ1). */
@@ -972,14 +1022,21 @@ export const spacesInTabs = () => invoke<string[]>("spaces_in_tabs");
 export const reportDropSlot = (index: number | null) =>
   invoke<void>("report_drop_slot", { index });
 
-/** This tab drags cards over its window's tab bar at `hover`, or no longer
- *  (`null`, В86). `seq` numbers this page's card reports, each above the one
- *  before: calls may arrive out of order (В10), and the backend drops a late
- *  one. */
-export const reportCardDrag = (seq: number, hover: CardDragHover | null) =>
-  invoke<void>("report_card_drag", { seq, hover });
+/** This tab began to drag cards: the backend follows the pointer over every
+ *  window until the button goes up (SPEC_OUTSIDE_WINDOW.md, ПК8). `seq`
+ *  numbers this page's card reports, each above the one before: calls may
+ *  arrive out of order (SPEC_TABS.md, В10), and the backend drops a late one. */
+export const beginCardDrag = (seq: number, begin: CardDragBegin) =>
+  invoke<void>("begin_card_drag", { seq, begin });
 
-/** This tab let cards go over its window's tab bar: a tab each at the slot
- *  under `drop.x` (В86). `seq` as for `reportCardDrag`. */
-export const dropCardsOnTabBar = (seq: number, drop: CardBarDrop) =>
-  invoke<void>("drop_cards_on_tab_bar", { seq, drop });
+/** The dragged card's title and look, read after the drag began. */
+export const updateCardDrag = (seq: number, update: CardDragUpdate) =>
+  invoke<void>("update_card_drag", { seq, update });
+
+/** This tab's drag of cards ended: let go or cancelled. */
+export const endCardDrag = (seq: number) =>
+  invoke<void>("end_card_drag", { seq });
+
+/** `Open N tabs?` of cards let go over this window's bar was answered. */
+export const answerCardTabs = (open: boolean) =>
+  invoke<void>("answer_card_tabs", { open });

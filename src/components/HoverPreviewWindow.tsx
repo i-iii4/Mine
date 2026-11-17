@@ -25,6 +25,8 @@ import {
   type HoverPreviewTarget,
   type HoverPreviewWindowPaint,
 } from "@/lib/hoverPreviewWindow";
+import type { HoverPreviewDrawn } from "@/lib/hoverPreviewPresenter";
+import type { OutsidePreviewPlan } from "@/lib/outsidePreviewSource";
 import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock } from "@/types";
 import { ReadOnlyCardPreview } from "./Card";
@@ -37,6 +39,8 @@ export function useHoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard>
   /** The target moves on its own, as a node of the graph does. */
   tracksTarget?: boolean;
   onShown?: (target: TTarget | null) => void;
+  /** The plan of a showing outside the app window (SPEC_OUTSIDE_WINDOW.md, ПН2). */
+  outside?: (target: TTarget) => OutsidePreviewPlan<TTarget, TCard> | null;
 }): HoverPreviewWindow<TTarget, TCard> {
   const latest = useRef(options);
   latest.current = options;
@@ -49,6 +53,7 @@ export function useHoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard>
     place: (target, height, moment) => latest.current.place(target, height, moment),
     tracksTarget: options.tracksTarget,
     onShown: (target) => latest.current.onShown?.(target),
+    outside: (target) => latest.current.outside?.(target) ?? null,
   }));
   useEffect(() => {
     intent.setAttendingListener(() => controller.attendingChanged());
@@ -151,14 +156,14 @@ function round(value: number): number {
 }
 
 /** The window holding cards: the open card's panel's and the graph's. */
-export function HoverPreviewWindowLayer<TTarget extends HoverPreviewTarget>({
+export function HoverPreviewWindowLayer({
   controller,
   vaultPath,
   thumbsRootPath,
   thumbVersions,
   attribute,
 }: {
-  controller: HoverPreviewWindow<TTarget, LightBlock | IndexedBlock>;
+  controller: HoverPreviewDrawn<LightBlock | IndexedBlock>;
   vaultPath: string;
   thumbsRootPath?: string;
   /** Rebuilt thumbnails' versions, where the surface keeps them. */
@@ -185,12 +190,14 @@ export function HoverPreviewWindowLayer<TTarget extends HoverPreviewTarget>({
  * corner read for the frame in pieces), `HOVER_PREVIEW_WINDOW_WIDTH_PX` wide;
  * the window measures its height and waits for its pictures as for a card's.
  */
-export function HoverPreviewWindowSurface<TTarget extends HoverPreviewTarget, TCard>({
+export function HoverPreviewWindowSurface<TCard>({
   controller,
   renderCard,
   attribute,
 }: {
-  controller: HoverPreviewWindow<TTarget, TCard>;
+  /** The window to draw: the page's own, or the outside window's
+   *  (SPEC_OUTSIDE_WINDOW.md, НО6). */
+  controller: HoverPreviewDrawn<TCard>;
   renderCard: (card: TCard) => ReactNode;
   /** The surface's own name of the window, for its tests and audits. */
   attribute: string;

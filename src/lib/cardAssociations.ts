@@ -10,7 +10,7 @@ export const SAME_ADDRESS_HEADING = "Same URL";
 
 /** The hint of an author heading, which opens the author's feed. */
 export function authorFeedHint(author: string): string {
-  return `All cards by ${author}`;
+  return `All elements by ${author}`;
 }
 
 /** What a block is called: `Same URL`, the author as written on the open

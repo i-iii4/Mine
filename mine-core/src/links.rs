@@ -72,7 +72,7 @@ pub enum LinkResolution {
     Ambiguous(Vec<String>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LinkIndex {
     paths: HashSet<String>,
     actual_paths: HashMap<String, Vec<String>>,
@@ -127,6 +127,56 @@ impl LinkIndex {
             values.sort();
         }
         index
+    }
+
+    /// Add the file at `path` to the index, as [`LinkIndex::new`] would
+    /// have indexed it: an index kept between two listings of a space
+    /// follows a file that appeared without listing the space again. A path
+    /// the index holds already, or one that is no path inside the space, is
+    /// left alone.
+    pub fn insert(&mut self, path: &str) {
+        let Some(normalized) = normalize_path(path) else {
+            return;
+        };
+        let actual = self.actual_paths.entry(normalized.clone()).or_default();
+        let Err(place) = actual.binary_search_by(|known| known.as_str().cmp(path)) else {
+            return;
+        };
+        actual.insert(place, path.to_string());
+        self.paths.insert(normalized.clone());
+        let parts: Vec<&str> = normalized.split('/').collect();
+        insert_sorted(
+            self.by_name
+                .entry(parts[parts.len() - 1].to_string())
+                .or_default(),
+            path,
+        );
+        for start in 0..parts.len() {
+            insert_sorted(
+                self.by_suffix.entry(parts[start..].join("/")).or_default(),
+                path,
+            );
+        }
+    }
+
+    /// Take the file at `path` out of the index: what is left is the index
+    /// [`LinkIndex::new`] builds of the other files. A path the index does
+    /// not hold is left alone.
+    pub fn remove(&mut self, path: &str) {
+        let Some(normalized) = normalize_path(path) else {
+            return;
+        };
+        if !remove_sorted(&mut self.actual_paths, &normalized, path) {
+            return;
+        }
+        if !self.actual_paths.contains_key(&normalized) {
+            self.paths.remove(&normalized);
+        }
+        let parts: Vec<&str> = normalized.split('/').collect();
+        remove_sorted(&mut self.by_name, parts[parts.len() - 1], path);
+        for start in 0..parts.len() {
+            remove_sorted(&mut self.by_suffix, &parts[start..].join("/"), path);
+        }
     }
 
     pub fn resolve(
@@ -482,6 +532,29 @@ pub fn obsidian_target_name_keys(raw_target: &str) -> Vec<String> {
     }
 }
 
+/// Put `path` into `paths`, which [`LinkIndex`] keeps sorted.
+fn insert_sorted(paths: &mut Vec<String>, path: &str) {
+    if let Err(place) = paths.binary_search_by(|known| known.as_str().cmp(path)) {
+        paths.insert(place, path.to_string());
+    }
+}
+
+/// Take `path` out of the sorted paths under `key`, and the key with its
+/// last path. Returns whether the path was there.
+fn remove_sorted(paths_by_key: &mut HashMap<String, Vec<String>>, key: &str, path: &str) -> bool {
+    let Some(paths) = paths_by_key.get_mut(key) else {
+        return false;
+    };
+    let Ok(place) = paths.binary_search_by(|known| known.as_str().cmp(path)) else {
+        return false;
+    };
+    paths.remove(place);
+    if paths.is_empty() {
+        paths_by_key.remove(key);
+    }
+    true
+}
+
 fn result_for(paths: &[String]) -> LinkResolution {
     match paths {
         [] => LinkResolution::Missing,
@@ -547,6 +620,79 @@ fn normalize_path(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Files of a space with what makes an index of names hard: the same
+    /// name in two folders, a name in two letter cases and in two Unicode
+    /// forms, nested folders, a note and a picture of one name.
+    const KEPT_FILES: &[&str] = &[
+        "Top.md",
+        "Cards/Foo.md",
+        "Cards/Sub/Foo.md",
+        "Cards/foo.md",
+        "Media/Foo.jpg",
+        "Media/Sub/Deep/clip.mp4",
+        "Media/\u{439}.png",
+        "Media/\u{438}\u{306}.png",
+        "Collections/Каталоги.md",
+        "Other/Media/Foo.jpg",
+    ];
+
+    /// An index that files were added to one by one is the index built of
+    /// all of them at once, in whatever order they came.
+    #[test]
+    fn an_index_grown_file_by_file_is_the_index_built_at_once() {
+        let built = LinkIndex::new(KEPT_FILES);
+        let mut forward = LinkIndex::default();
+        for path in KEPT_FILES {
+            forward.insert(path);
+        }
+        let mut backward = LinkIndex::default();
+        for path in KEPT_FILES.iter().rev() {
+            backward.insert(path);
+            // A path added twice is added once.
+            backward.insert(path);
+        }
+        assert_eq!(forward, built);
+        assert_eq!(backward, built);
+        assert_eq!(
+            forward.resolve("Cards/Note.md", "Top", LinkSyntax::Obsidian),
+            LinkResolution::Resolved("Top.md".to_string())
+        );
+    }
+
+    /// Taking any one file out leaves the index built of the others, and
+    /// putting it back gives the whole index again.
+    #[test]
+    fn an_index_without_a_file_is_the_index_built_of_the_others() {
+        let whole = LinkIndex::new(KEPT_FILES);
+        for gone in KEPT_FILES {
+            let others: Vec<&str> = KEPT_FILES.iter().copied().filter(|path| path != gone).collect();
+            let mut index = whole.clone();
+            index.remove(gone);
+            assert_eq!(index, LinkIndex::new(&others), "without {gone}");
+            // A path that is not there is left alone.
+            index.remove(gone);
+            index.remove("Media/never there.jpg");
+            assert_eq!(index, LinkIndex::new(&others), "without {gone}, twice");
+            index.insert(gone);
+            assert_eq!(index, whole, "with {gone} back");
+        }
+    }
+
+    /// The last file out leaves an empty index; a path that is none inside
+    /// a space changes nothing.
+    #[test]
+    fn an_index_emptied_file_by_file_is_empty() {
+        let mut index = LinkIndex::new(KEPT_FILES);
+        index.insert("/outside.md");
+        index.insert("..");
+        index.remove("/outside.md");
+        assert_eq!(index, LinkIndex::new(KEPT_FILES));
+        for path in KEPT_FILES {
+            index.remove(path);
+        }
+        assert_eq!(index, LinkIndex::default());
+    }
 
     #[test]
     fn a_short_link_to_a_moved_note_is_retargeted() {

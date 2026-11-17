@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en" data-outside-window>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Preview</title>
+    <!-- The outside window is clear: only what it shows draws
+         (SPEC_OUTSIDE_WINDOW.md, НО1). -->
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { background: transparent; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/outsideWindow/main.tsx"></script>
+  </body>
+</html>

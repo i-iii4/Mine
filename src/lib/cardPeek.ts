@@ -16,7 +16,7 @@
 
 import { useSyncExternalStore, type CSSProperties } from "react";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
-import { SPRING_SETTLE, springSettleMs } from "./channelIcon";
+import { SPRING_SETTLE, springSettleMs } from "./spring";
 import { cubicBezier, cubicBezierCurve, parseCubicBezier } from "./cubicBezier";
 import { MOTION_MOVE_EASE, MOTION_SURFACE_EASE, type MotionLevel } from "./motion";
 import {
@@ -217,11 +217,11 @@ export function peekPoseAt(move: PeekPoseMove, elapsedMs: number): PeekPose {
 }
 
 /** The window's spring (SPEC_CARD_PEEK.md, «Величины»): critically damped,
- *  response 0.25 s (user's decision of 24.10.2026: faster than the compact
- *  stack's 0.3 s, `SPRING_RESPONSE_S` in channelIcon.ts, which keeps it). */
+ *  response 0.25 s (user's decision of 24.10.2026: faster than the
+ *  interface's 0.3 s, `SPRING_RESPONSE_S` in spring.ts, which keeps it). */
 export const CARD_PEEK_SPRING_RESPONSE_S = 0.25;
 
-/** How long the window's spring takes from rest, by the stack's rule:
+/** How long the window's spring takes from rest, by spring.ts's rule:
  *  until it is within 0.1% of its target. */
 export const CARD_PEEK_SPRING_MS = springSettleMs(CARD_PEEK_SPRING_RESPONSE_S);
 
@@ -703,8 +703,8 @@ export function stepPeekSpring(spring: PeekSpring, dtMs: number): PeekSpring {
   };
 }
 
-/** Whether the spring has come to rest at its target: within the stack
- *  spring's settle threshold, and as slow as it is there. */
+/** Whether the spring has come to rest at its target: within the settle
+ *  threshold of spring.ts, and as slow as it is there. */
 export function peekSpringSettled(spring: PeekSpring): boolean {
   return Math.abs(spring.position - spring.target) <= SPRING_SETTLE
     && Math.abs(spring.velocity) <= SPRING_SETTLE * OMEGA;

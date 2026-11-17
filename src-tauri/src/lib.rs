@@ -19,6 +19,14 @@ pub mod domain;
 mod frame_context_menu;
 #[cfg(feature = "desktop")]
 mod menu_panel;
+/// The menu panel's own window, for `tests/menu_panel_window.rs`.
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub use menu_panel::window as menu_panel_window;
+#[cfg(feature = "desktop")]
+mod outside_window;
+/// The outside window's AppKit parts, for `tests/outside_window.rs`.
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub use outside_window::native::window as outside_window_parts;
 #[cfg(feature = "desktop")]
 mod import;
 pub mod markdown_images;
@@ -143,8 +151,10 @@ pub fn run() {
             commands::tabs::move_tab_to_new_window,
             commands::tabs::begin_tab_drag,
             commands::tabs::report_drop_slot,
-            commands::tabs::report_card_drag,
-            commands::tabs::drop_cards_on_tab_bar,
+            commands::tabs::begin_card_drag,
+            commands::tabs::update_card_drag,
+            commands::tabs::end_card_drag,
+            commands::tabs::answer_card_tabs,
             #[cfg(feature = "article-audio")]
             commands::article_audio::get_article_audio_state,
             #[cfg(feature = "article-audio")]
@@ -180,7 +190,7 @@ pub fn run() {
             commands::vault::get_vault_write_layout,
             commands::vault::set_vault_write_layout,
             commands::blocks::list_grid_blocks,
-            commands::blocks::get_grid_rows,
+            commands::blocks::read_feed_changes,
             commands::graph::list_graph_snapshot,
             commands::blocks::get_block,
             commands::card_associations::list_card_associations,
@@ -221,6 +231,7 @@ pub fn run() {
             commands::search::search_grid_blocks,
             commands::channels::list_taxonomy_snapshot,
             commands::channels::create_channel,
+            commands::channels::create_untitled_channel,
             commands::channels::reorder_channels,
             commands::channels::rename_channel,
             commands::channels::check_collection_name,
@@ -257,6 +268,11 @@ pub fn run() {
             commands::menu_panel::menu_panel_close,
             commands::menu_panel::menu_panel_request,
             commands::menu_panel::menu_panel_painted,
+            commands::menu_panel::menu_panel_progress,
+            commands::outside_window::outside_window_prepare,
+            commands::outside_window::outside_window_open_preview,
+            commands::outside_window::outside_window_preview_step,
+            commands::outside_window::outside_window_report,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -277,6 +293,11 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Reads of notes and media iCloud took away bring them down,
+            // whatever process started Mine (SPEC_CLOUD_STORAGE.md, Х23).
+            if let Err(error) = storage::cloud_files::let_reads_bring_contents_down() {
+                log::warn!("reads of files in iCloud follow the inherited policy: {error}");
+            }
             updater::initialize(app.handle());
             // The lock is keyed by the build's identifier: a side instance
             // (`bun run dev:side`, identifier `com.mine.app.dev`) runs next to

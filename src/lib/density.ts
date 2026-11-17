@@ -1,13 +1,10 @@
-// Interface spacing — one value behind every gap that separates content.
+// The feed's spacing, Display's Spacing: the gap between the feed's cards and
+// the feed's insets, nothing else (user's decision of 15.11.2026). The shell
+// outside the feed keeps its own interval, 16px (`--shell-rhythm`,
+// global.css), and the chrome its 8px inset (`--chrome-edge-pad`).
 //
-// It drives the feed's card gap and side/top insets, the expanded card's
-// columns and top offset. Chrome (top bar, metadata row, bottom action bar)
-// is NOT on this rhythm any more: its edge inset is pinned to 8px via
-// --chrome-edge-pad, independently of feed spacing.
-//
-// Published as a CSS variable on the root so stylesheets and Tailwind arbitrary
-// values read it directly; the feed also reads the number through a hook,
-// because masonry geometry is computed in JS.
+// Published as a CSS variable on the root; the feed reads the number through
+// a hook, because masonry geometry is computed in JS.
 
 import { useSyncExternalStore } from "react";
 

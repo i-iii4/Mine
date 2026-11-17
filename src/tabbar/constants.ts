@@ -7,6 +7,10 @@
 // restated here once and constants.test.ts reads the Rust source to keep the
 // two equal.
 
+/** A tab's label and the card gap's title: one line of the chrome's mono
+ *  text that dissolves at its right edge (В46; `FadeText`). */
+export const TAB_LABEL_CLASS = "flex-1 font-mono text-sm leading-none";
+
 /** Height of the bar page: a chrome row and its 1 px bottom separator, the
  *  step of a sidebar table row (domain/windows.rs `TAB_BAR_HEIGHT_PX`, В44,
  *  В83). */

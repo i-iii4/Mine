@@ -94,7 +94,15 @@ import { NOTIFICATION_BOTTOM_VAR, publishNotificationBottom } from "@/lib/notifi
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
 import { MASONRY_MIN_COLUMN_COUNT } from "@/lib/masonryLayout";
-import { createPreviewRowQueue } from "@/lib/previewRowQueue";
+import {
+  createFeedPatchQueue,
+  feedPatchAnnounces,
+  takeOwnFeedChanges,
+  type FeedPatchOutcome,
+  type FeedPatchQueue,
+  type FeedPatchRequest,
+} from "@/lib/feedChanges";
+import { applyFeedPatch, feedPatchEnd } from "@/lib/feedPatch";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
 import { topRowCard, topRowShowsPlace, type TopRowCardView } from "@/lib/topRowPath";
@@ -149,19 +157,12 @@ import {
   type NativeWindowChromeSurfaceToken,
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
-import { CardPointMenu } from "@/components/CardHoverMenu";
+import { CardPointMenuHost, type CardPointMenuHandle } from "@/components/CardHoverMenu";
 import type { ChromeNameFieldHandle } from "@/components/ChromeNameField";
 import { afterMenuCloses } from "@/lib/openMenus";
 import { MainSecondaryTopBar } from "@/components/MainSecondaryChrome";
 import { CardPeek, CardPeekArea, CardPeekPlate, type CardPeekOpening } from "@/components/CardPeek";
 import { DetailView, useDetailPreload } from "@/components/DetailView";
-
-type CardActionsMenuTarget = {
-  block: LightBlock | IndexedBlock;
-  x: number;
-  y: number;
-  sequence: number;
-};
 
 function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
@@ -236,12 +237,18 @@ const BATCH_TAG_REFRESH_DELAY_MS = 750;
 const REFRESH_BURST_DEBOUNCE_MS = 2000;
 function fetchGridBlocks(
   place: TabLocation,
-  offset: number,
+  // The card the page comes after: the last card of the list on screen, or
+  // none for the feed's first cards (SPEC_STORAGE.md, «Страница ленты по
+  // ключу»). Its place in the order is its `saved_at` and `slug`.
+  after: LightBlock | null,
   limit: number,
   // The feed's order, as chosen in the Display panel (SPEC_FEED_DISPLAY.md, Д8).
-  order: FeedOrder = getFeedDisplay().sort,
+  order: FeedOrder,
+  // Why the page reads, for the read's line in `Mine.log`.
+  reason: FeedReadReason,
 ) {
-  return listGridBlocks(place, offset, limit, order);
+  const token = after === null ? null : { saved_at: after.saved_at, slug: after.slug };
+  return listGridBlocks(place, token, limit, order, reason);
 }
 
 import type {
@@ -252,6 +259,7 @@ import type {
   DeleteBlockPlan,
   DeleteBlocksPlan,
   FeedOrder,
+  FeedReadReason,
   IndexedBlock,
   LightBlock,
   MainViewMode,
@@ -269,7 +277,9 @@ import type {
   TabHistoryStep,
   TabLocation,
   TabView,
-  CardBarDrop,
+  CardDragDrop,
+  CardDragOver,
+  CardTabsConfirm,
   MergeTiming,
   TabVisibility,
   VaultChangedPayload,
@@ -289,9 +299,10 @@ import {
   type StartupMilestone,
   startStartupMaintenance,
   listGridBlocks,
-  getGridRows,
+  readFeedChanges,
   listTaxonomySnapshot,
   createChannel,
+  createUntitledChannel,
   deleteChannel,
   reorderChannels,
   renameChannel,
@@ -327,6 +338,7 @@ import {
   tabPainted,
   setWindowSidebar,
   newTab,
+  answerCardTabs,
 } from "@/lib/commands";
 import { ArticleAudioGatewayProvider } from "@/lib/articleAudioGateway";
 import { scheduleAfterNextPaint, whenCardsRendered } from "@/lib/startup";
@@ -354,12 +366,6 @@ import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { useSidebarKeyboardFocus, type FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import { MOVED_BY_KEY_STATE, focusOpenCardRoot, sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
-import {
-  COMPACT_STACK_EDGE_STORAGE_KEY,
-  SIDEBAR_STYLE_STORAGE_KEY,
-  reloadCompactStackEdge,
-  reloadSidebarStyle,
-} from "@/lib/compactStack";
 import { useTopRowWrap } from "@/hooks/useTopRowWrap";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
@@ -407,7 +413,7 @@ import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { VaultConflictsNotice } from "@/components/VaultConflictsNotice";
 import { Grid } from "@/components/Grid";
 import { GraphView } from "@/components/GraphView";
-import { DragCardStackPreview } from "@/components/Card";
+import { DRAG_STACK_DEPTH, DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import { MOTION_LEVEL_STORAGE_KEY, reloadMotionLevel, roleMs, type MotionOptions } from "@/lib/motion";
@@ -433,10 +439,13 @@ import {
 } from "@/lib/settingsChanged";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
-import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
 import { OpenCardTabsDialog } from "@/components/OpenCardTabsDialog";
-import { useCardDragToTabBar } from "@/hooks/useCardDragToTabBar";
+import { SidebarSearchDropTarget } from "@/components/SidebarSearchDropTarget";
+import { useCardDragAcrossWindows, type CardDragAcrossInput } from "@/hooks/useCardDragAcrossWindows";
+import { CARD_DRAG_DROP_EVENT, CARD_DRAG_OVER_EVENT, CARD_TABS_CONFIRM_EVENT, collectionRowAt, openCollectionAt, sidebarSearchAt } from "@/lib/remoteCardDrop";
+import { SIDEBAR_SEARCH_DROP_ID } from "@/lib/sidebarDndCollision";
+import { outsideLook } from "@/lib/outsidePreviewSource";
 import { asksBeforeOpening, cardTabsOrder } from "@/lib/cardTabDrop";
 import { logMergeTiming } from "@/lib/mergeTiming";
 import { DeleteKeptMediaNotice, keptOfferedMedia } from "@/components/DeleteWindowParts";
@@ -473,8 +482,10 @@ const SCROLL_RESTORE_PAGE_LIMIT = 25;
 /// `vault-changed`. A command's news names what it renamed (SPEC_TABS.md,
 /// В17); the watcher's names nothing, and a preview pass's carries
 /// `preview_only` and no renames at all.
-type VaultChangedEvent = Omit<VaultChangedPayload, "renames"> & {
+type VaultChangedEvent = Omit<VaultChangedPayload, "renames" | "cards"> & {
   renames?: SpaceRename[];
+  /** The cards a command changed; absent or `null` when they are not known. */
+  cards?: number[] | null;
   preview_only?: boolean;
 };
 
@@ -1068,7 +1079,6 @@ export function AppWithVault({
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   // The create row was opened by ⇧⌘N (SPEC_MOTION_LEVELS.md, С8).
   const [createRowByKey, setCreateRowByKey] = useState(false);
-  const [isNamingCollection, setIsNamingCollection] = useState(false);
   // Whether the active view holds a focus that Enter would open. The bottom bar
   // shows a command only while it can be used, and Focus has nothing to act on
   // until something is focused.
@@ -1195,13 +1205,11 @@ export function AppWithVault({
     selectionClearRef.current = clear;
     setHasSelection(clear !== null);
   }, []);
-  const [pendingCreateChannelDrop, setPendingCreateChannelDrop] =
-    useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const selectedBlockRef = useRef(selectedBlock);
   selectedBlockRef.current = selectedBlock;
-  // SPEC_CARD_PEEK.md, О1, О9, О16: the «Card view» the open card
+  // SPEC_CARD_PEEK.md, О1, О9, О16: the «Element view» the open card
   // stands by, Full page or Peek: the one chosen when it opened, or the one
   // its own button chose since; whether the right part holds the window.
   // From them the view it stands in (`openCardView`); how its window's
@@ -1236,8 +1244,11 @@ export function AppWithVault({
   // The open card's parts of the build load after the first cards, whatever
   // view the card opens in (SPEC_READING_MODE.md, Ч0.6).
   useDetailPreload();
-  const [cardActionsMenuTarget, setCardActionsMenuTarget] =
-    useState<CardActionsMenuTarget | null>(null);
+  // The card menu at a point (the graph's cards, the sidebar's thumbnails):
+  // opened through its host's handle, in the menu panel or on the page
+  // (SPEC_MENU_WINDOW.md, МО41).
+  const cardPointMenuRef = useRef<CardPointMenuHandle>(null);
+  const [cardPointMenuOpen, setCardPointMenuOpen] = useState(false);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
   const [selectedBlockTags, setSelectedBlockTags] = useState<string[]>([]);
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
@@ -1296,6 +1307,11 @@ export function AppWithVault({
   /// The card a card drag took hold of: its title names the tab it would
   /// become over the tab bar (SPEC_TABS.md, В86).
   const [blockDragSlug, setBlockDragSlug] = useState<string | null>(null);
+  /// Every card the drag holds, and the page's count of its card drags: the
+  /// backend follows each past the window (SPEC_OUTSIDE_WINDOW.md, ПК8).
+  const [blockDragSlugs, setBlockDragSlugs] = useState<string[]>([]);
+  const [blockDragNumber, setBlockDragNumber] = useState(0);
+  const [blockDragFromThumbnail, setBlockDragFromThumbnail] = useState(false);
   /// Counts card drags, so a card read that lands after its drag ended draws
   /// nothing.
   const blockDragSequenceRef = useRef(0);
@@ -1336,7 +1352,6 @@ export function AppWithVault({
   const gridGenerationRef = useRef<number | null>(null);
   const warmRoutePageBufferRef = useRef<Set<string>>(new Set());
   const paginationRequestRef = useRef<object | null>(null);
-  const cardActionsMenuSequenceRef = useRef(0);
   const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
@@ -1458,7 +1473,7 @@ export function AppWithVault({
       }
     }
     cancelPendingDetailClose();
-    setCardActionsMenuTarget(null);
+    cardPointMenuRef.current?.close();
     setSelectedBlockAnchor(anchor);
     setSelectedBlock(block);
   }, [cancelPendingDetailClose]);
@@ -1467,31 +1482,23 @@ export function AppWithVault({
     block: LightBlock | IndexedBlock,
     point: { x: number; y: number },
   ) => {
-    cardActionsMenuSequenceRef.current += 1;
-    setCardActionsMenuTarget({
-      block,
-      x: point.x,
-      y: point.y,
-      sequence: cardActionsMenuSequenceRef.current,
-    });
+    cardPointMenuRef.current?.open(block, point);
   }, []);
 
-  const previewRowRevisionsRef = useRef(new Map<string, number>());
   const applyGridSnapshot = useCallback((place: TabLocation, grid: GridSnapshot): boolean => {
     if (!projectionRevisionOwner.accept("grid", grid.generation)) {
       return false;
     }
     gridGenerationRef.current = grid.generation;
     const routeKey = routeKeyFor(place);
-    const currentBySlug = new Map(blocksRef.current.map((block) => [block.slug, block]));
-    const incoming = grid.blocks.map((block) =>
-      (previewRowRevisionsRef.current.get(block.slug) ?? -1) > grid.generation
-        ? currentBySlug.get(block.slug) ?? block : block);
-    routeSnapshotCacheRef.current.set(routeKey, { ...grid, blocks: incoming });
+    // A full read never comes back older than a partial read already in the
+    // list: partial reads wait for it, and one in flight when it began is
+    // dropped (`createFeedPatchQueue`).
+    routeSnapshotCacheRef.current.set(routeKey, grid);
     // Preserve object identity for blocks whose content did not change so a
     // no-op refresh does not invalidate the grid's downstream memos or remount
     // any cards.
-    setBlocks((prev) => reconcileBlocks(prev, incoming, heldSlugsRef.current));
+    setBlocks((prev) => reconcileBlocks(prev, grid.blocks, heldSlugsRef.current));
     setGridSnapshotIdentity({ routeKey, generation: grid.generation });
     setTotalBlocks(grid.total_blocks);
     setHasMoreBlocks(grid.has_more);
@@ -1504,40 +1511,97 @@ export function AppWithVault({
     warmRoutePageBufferRef.current.clear();
     lastRevalidatedRouteKeyRef.current = null;
   }, []);
+  /// The lists kept for other places may hold changed cards as they were.
+  /// The list on screen is not read anew, so its warmed page stays warmed:
+  /// a partial read asks for no further page.
+  const dropCachedRoutes = useCallback(() => {
+    routeSnapshotCacheRef.current.clear();
+  }, []);
 
-  const previewRowsRef = useRef<ReturnType<typeof createPreviewRowQueue> | null>(null);
+  // The page's partial reads: the cards a command, news of the space, a
+  // ready preview or a closed card menu named are read alone and put into
+  // the list, instead of the feed being read again from its first card
+  // (SPEC_FRONTEND.md, «Обновление ленты»). One queue for the page's life.
+  const feedPatchQueueRef = useRef<FeedPatchQueue | null>(null);
+  const hasMoreBlocksRef = useRef(hasMoreBlocks);
+  hasMoreBlocksRef.current = hasMoreBlocks;
+  // Set below, where the feed's full read is defined.
+  const readFeedInFullRef = useRef<(reason: FeedReadReason) => Promise<unknown>>(() => Promise.resolve());
+  const patchFeed = useCallback(async ({ cards, reason, superseded }: FeedPatchRequest): Promise<FeedPatchOutcome> => {
+    const path = vaultPathRef.current;
+    const place = currentLocationRef.current;
+    const routeKey = placeKey(place);
+    const shown = shownListRef.current;
+    // The list on screen is not this place's: only its own read brings it.
+    if (path === null || shown === null || shown.routeKey !== routeKey) return "full";
+    const order = shown.order;
+    const list = blocksRef.current;
+    // More cards named than the list holds: a full read reads fewer rows.
+    if (cards.length > list.length) return "full";
+    const named = new Set(cards);
+    const end = feedPatchEnd(list, named, hasMoreBlocksRef.current);
+    // Every card of the list is named and the feed has more: where the list
+    // ends cannot be told.
+    if (end === undefined) return "full";
+    const patch = await readFeedChanges(path, place, order, cards, end, reason);
+    if (
+      superseded()
+      || patch.path !== path
+      || vaultPathRef.current !== path
+      || currentPlaceKeyRef.current !== routeKey
+      || shownListRef.current?.order !== order
+    ) {
+      // The answer is another space's, place's or order's, or a full read
+      // that began meanwhile holds these cards.
+      return "applied";
+    }
+    if (blocksRef.current !== list) {
+      // The list changed while the answer was on its way (a page came): the
+      // answer was read for the list as it was. The cards are read again.
+      feedPatchQueueRef.current?.note(cards, reason);
+      return "applied";
+    }
+    if (patch.range_lost) return "full";
+    const patched = applyFeedPatch(list, named, patch.rows);
+    if (patched === null || !projectionRevisionOwner.accept("grid", patch.generation)) return "full";
+    gridGenerationRef.current = patch.generation;
+    dropCachedRoutes();
+    // Unchanged cards keep their objects, and a card whose menu is open
+    // stays where it is, as after a full read.
+    setBlocks((current) => (
+      current === list ? reconcileBlocks(current, patched, heldSlugsRef.current) : current
+    ));
+    setGridSnapshotIdentity({ routeKey, generation: patch.generation });
+    setTotalBlocks(patch.total_blocks);
+    setHasMoreBlocks(patch.has_more);
+    if (feedPatchAnnounces(reason)) window.dispatchEvent(new Event("vault-refreshed"));
+    return "applied";
+  }, [dropCachedRoutes, projectionRevisionOwner]);
+  const patchFeedRef = useRef(patchFeed);
+  patchFeedRef.current = patchFeed;
+  useEffect(() => {
+    const queue = createFeedPatchQueue({
+      patch: (request) => patchFeedRef.current(request),
+      readInFull: (reason) => readFeedInFullRef.current(reason),
+      onError: (error) => console.error("Failed to read the changed cards:", error),
+    });
+    feedPatchQueueRef.current = queue;
+    return () => {
+      queue.dispose();
+      feedPatchQueueRef.current = null;
+    };
+  }, []);
+  // Another place, order or space: what waited belonged to the list that is
+  // going, and the new list is read in full.
+  useEffect(() => {
+    feedPatchQueueRef.current?.reset();
+  }, [vaultPath, currentPlaceKey]);
+
   // A preview that lands before the feed holds its card: the feed read that
   // brings the card may have started before the preview was written, and
   // would leave the card on its provisional shape until the next full read.
   // Remembered briefly, re-read on arrival.
   const unseenPreviewSlugsRef = useRef(new Map<string, number>());
-  useEffect(() => {
-    previewRowRevisionsRef.current.clear();
-    if (!vaultReady) return;
-    const path = vaultPath;
-    const place = currentPlaceKey;
-    const queue = createPreviewRowQueue({
-      fetch: (slugs) => getGridRows(path, slugs),
-      apply: (snapshot) => {
-        if (snapshot.path !== vaultPathRef.current || currentPlaceKeyRef.current !== place) return;
-        if (snapshot.generation < (gridGenerationRef.current ?? -1)) return;
-        invalidateRouteSnapshots();
-        const replacements = new Map(snapshot.blocks.filter((block) => {
-          if (snapshot.generation < (previewRowRevisionsRef.current.get(block.slug) ?? -1)) return false;
-          previewRowRevisionsRef.current.set(block.slug, snapshot.generation);
-          return true;
-        }).map((block) => [block.slug, block]));
-        // Keep route membership/order and identities of unchanged cards. A late
-        // response never resurrects a deleted card or truncates loaded pages.
-        setBlocks((current) => reconcileBlocks(current,
-          current.map((block) => replacements.get(block.slug) ?? block)));
-      },
-      onError: (error) => console.error("Failed to refresh preview rows:", error),
-    });
-    previewRowsRef.current = queue;
-    return () => { queue.dispose(); previewRowsRef.current = null; };
-  }, [vaultPath, currentPlaceKey, vaultReady, invalidateRouteSnapshots, projectionRevisionOwner]);
-
   useEffect(() => {
     unseenPreviewSlugsRef.current.clear();
   }, [vaultPath]);
@@ -1551,7 +1615,7 @@ export function AppWithVault({
       const landedAt = unseen.get(block.slug);
       if (landedAt === undefined) continue;
       unseen.delete(block.slug);
-      if (now - landedAt <= UNSEEN_PREVIEW_WINDOW_MS) previewRowsRef.current?.add(block.slug);
+      if (now - landedAt <= UNSEEN_PREVIEW_WINDOW_MS) feedPatchQueueRef.current?.note([block.id], "preview");
     }
   }, [blocks]);
 
@@ -1935,6 +1999,7 @@ export function AppWithVault({
     invalidateCachedRoutes = false,
     preserveLoadedRange = false,
     retry = false,
+    reason = "route",
   }: {
     place?: TabLocation;
     preferCachedRoute?: boolean;
@@ -1949,6 +2014,8 @@ export function AppWithVault({
     preserveLoadedRange?: boolean;
     /** The read is an automatic retry of a failed one and spends its budget. */
     retry?: boolean;
+    /** Why the feed is read, for the read's line in `Mine.log`. */
+    reason?: FeedReadReason;
   } = {}) => {
     const requestId = ++loadRequestIdRef.current;
     cancelGridRetry();
@@ -1985,8 +2052,11 @@ export function AppWithVault({
     // (minimum one) so the backend returns the full contiguous span.
     const loadedCount = preserveLoadedRange ? blocksRef.current.length : 0;
     const pageLimit = refreshPageLimit(loadedCount, GRID_PAGE_SIZE);
+    // This read holds every card named until now; the cards named while it
+    // is out are read after it (SPEC_FRONTEND.md, «Обновление ленты»).
+    feedPatchQueueRef.current?.fullReadStarted();
     try {
-      const grid = await fetchGridBlocks(placeAtStart, 0, pageLimit, orderAtStart);
+      const grid = await fetchGridBlocks(placeAtStart, null, pageLimit, orderAtStart, retry ? "retry" : reason);
       if (
         loadRequestIdRef.current !== requestId
         || vaultPathRef.current !== pathAtStart
@@ -2030,6 +2100,8 @@ export function AppWithVault({
         error: msg,
       });
       return false;
+    } finally {
+      feedPatchQueueRef.current?.fullReadSettled();
     }
   }, [applyGridSnapshot, cancelGridRetry, cancelPageRetry, invalidateRouteSnapshots, routeKeyFor, scheduleGridRetry]);
 
@@ -2173,7 +2245,7 @@ export function AppWithVault({
     try {
       await Promise.all([
         pending.grid
-          ? loadGridSnapshotRef.current({ preferCachedRoute: true, preserveLoadedRange: true })
+          ? loadGridSnapshotRef.current({ preferCachedRoute: true, preserveLoadedRange: true, reason: "news" })
           : Promise.resolve(),
         pending.taxonomy ? loadTaxonomySnapshotRef.current() : Promise.resolve(),
         pending.previews ? loadPreviews() : Promise.resolve(),
@@ -2233,13 +2305,13 @@ export function AppWithVault({
   /// sync) is read once per `REFRESH_BURST_DEBOUNCE_MS`. Before 10.11.2026
   /// every news waited the whole debounce, and a tab hidden meanwhile never
   /// read it: a hidden page's timers wait (SPEC_TABS.md, В15, В19).
-  const followSpaceNews = useCallback(() => {
+  const followSpaceNews = useCallback((feedInFull: boolean) => {
     const now = performance.now();
     const startedAt = refreshStartedAtRef.current;
     const readAt = startedAt === null ? now : Math.max(now, startedAt + REFRESH_BURST_DEBOUNCE_MS);
     const dueAt = refreshDueAtRef.current;
     scheduleRefresh(
-      { grid: true, taxonomy: true, previews: true },
+      { grid: feedInFull, taxonomy: true, previews: true },
       readAt - now,
       // A read already due sooner stays; one due later (the per-file news
       // of the same change set it) is brought forward.
@@ -2256,6 +2328,8 @@ export function AppWithVault({
       refreshDueAtRef.current = null;
     }
     void flushRefreshQueue();
+    // The cards named while hidden waited on a timer too.
+    feedPatchQueueRef.current?.flush();
   }, [flushRefreshQueue]);
 
   const handleCardMenuOpenChange = useCallback((slug: string, open: boolean) => {
@@ -2272,31 +2346,64 @@ export function AppWithVault({
       return next;
     });
     if (open || !wasHeld) return;
-    // The menu is gone, so the feed can finally close over the card. Reload
-    // rather than filter locally: the snapshot is the only thing that knows
-    // whether the card still belongs here.
-    //
-    // `preserveLoadedRange` is not optional here. Without it the refresh
-    // returns the first page alone, truncating however far the user had
-    // scrolled and rebuilding every card below — a visible rebuild of the whole
-    // feed as the price of closing one menu. The route cache is left intact for
-    // the same reason: this refresh is about one card, not the whole route.
-    void loadGridSnapshotRef.current?.({ preserveLoadedRange: true });
+    // The menu is gone, so the feed can finally close over the card. Its row
+    // is read rather than filtered locally: the index is the only thing that
+    // knows whether the card still belongs here. One card, not the feed:
+    // until 15.11.2026 every closed card menu read the whole loaded feed
+    // again (SPEC_FRONTEND.md, «Обновление ленты»).
+    const released = blocksRef.current.find((block) => block.slug === slug);
+    if (released) feedPatchQueueRef.current?.note([released.id], "card_menu");
   }, []);
 
-  const reloadAllSnapshots = useCallback(async () => {
-    invalidateRouteSnapshots();
+  /// The feed after this page's own commands: the cards they named are read
+  /// alone. Read in full when no command answered since the last refresh
+  /// (the refresh has another cause), or when a command could not name its
+  /// cards or failed (SPEC_FRONTEND.md, «Обновление ленты»).
+  const readFeedAfterOwnChange = useCallback(async () => {
+    const own = takeOwnFeedChanges();
+    if (own === null || own.unknown) {
+      await loadGridSnapshot({ invalidateCachedRoutes: true, preserveLoadedRange: true, reason: "own_command" });
+      return;
+    }
+    if (own.cards.length === 0) {
+      // The command changed no card's row (a media file no card shows), but
+      // it changed the space: what reads the space reads it again.
+      window.dispatchEvent(new Event("vault-refreshed"));
+      return;
+    }
+    const queue = feedPatchQueueRef.current;
+    if (!queue) return;
+    queue.note(own.cards, "own_command");
+    await queue.settled();
+  }, [loadGridSnapshot]);
+  /// The feed in full, whatever this page's commands named: for a change
+  /// that names no cards.
+  const readFeedInFull = useCallback(async (reason: FeedReadReason) => {
+    takeOwnFeedChanges();
+    await loadGridSnapshot({ invalidateCachedRoutes: true, preserveLoadedRange: true, reason });
+  }, [loadGridSnapshot]);
+  readFeedInFullRef.current = (reason) => (
+    loadGridSnapshot({ invalidateCachedRoutes: true, preserveLoadedRange: true, reason })
+  );
+
+  /// The page after its own command: the feed by the cards the command named,
+  /// the collections and the sidebar previews in full. `feedInFull`: the
+  /// change names no cards (the first index of a space), and the feed is
+  /// read in full for `feedInFull`.
+  const reloadAllSnapshots = useCallback(async (feedInFull?: FeedReadReason) => {
+    // A full read of the feed drops everything kept for the routes itself.
+    dropCachedRoutes();
     await Promise.all([
-      // Keep whatever the user had scrolled through. Without this a refresh —
-      // connecting a card to a collection, say — hands back the first page
-      // alone, so every card past it unmounts and mounts again: video restarts,
-      // posters refetch, and the feed visibly rebuilds around an edit that
-      // touched one card.
-      loadGridSnapshot({ invalidateCachedRoutes: true, preserveLoadedRange: true }),
+      // The list keeps whatever the user had scrolled through: the named
+      // cards change in place, and a full read reads the whole loaded range.
+      // A read of the first page alone would unmount every card past it:
+      // video restarts, posters refetch, and the feed visibly rebuilds around
+      // an edit that touched one card.
+      feedInFull === undefined ? readFeedAfterOwnChange() : readFeedInFull(feedInFull),
       loadTaxonomySnapshotState(),
       loadPreviews(),
     ]);
-  }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState]);
+  }, [dropCachedRoutes, loadPreviews, loadTaxonomySnapshotState, readFeedAfterOwnChange, readFeedInFull]);
 
   // A failed next page is asked again on its own, a bounded number of times,
   // while the route load it continues is still the one on screen. Any route
@@ -2343,14 +2450,19 @@ export function AppWithVault({
     const pathAtStart = vaultPathRef.current;
     const placeAtStart = currentLocationRef.current;
     const placeKeyAtStart = placeKey(placeAtStart);
-    const offsetAtStart = blocksRef.current.length;
+    // The page comes after the last card of the list, by that card's place
+    // in the feed's order and not by its number: cards added or removed
+    // before it do not shift the page (SPEC_STORAGE.md, «Страница ленты по
+    // ключу»).
+    const lastAtStart = blocksRef.current[blocksRef.current.length - 1] ?? null;
     const routeLoadRequestIdAtStart = loadRequestIdRef.current;
-    const generationAtStart = gridGenerationRef.current;
     // The next page continues the list on screen, in that list's order.
     const orderAtStart = shownListRef.current?.order ?? getFeedDisplay().sort;
+    // The page was read before a change the list already shows: asked again.
+    let olderThanList = false;
     setLoadingMoreBlocks(true);
     try {
-      const grid = await fetchGridBlocks(placeAtStart, offsetAtStart, GRID_PAGE_SIZE, orderAtStart);
+      const grid = await fetchGridBlocks(placeAtStart, lastAtStart, GRID_PAGE_SIZE, orderAtStart, "page");
       if (
         vaultPathRef.current !== pathAtStart
         || currentPlaceKeyRef.current !== placeKeyAtStart
@@ -2358,22 +2470,17 @@ export function AppWithVault({
       ) {
         return;
       }
-      const acceptedGeneration = gridGenerationRef.current;
-      if (
-        generationAtStart === null
-        || acceptedGeneration !== generationAtStart
-        || grid.generation !== generationAtStart
-      ) {
-        if (grid.generation > (acceptedGeneration ?? -1)) {
-          invalidateRouteSnapshots();
-          void loadGridSnapshotRef.current({
-            place: placeAtStart,
-            invalidateCachedRoutes: true,
-            preserveLoadedRange: true,
-          });
-        }
+      // A page newer than the list is taken: it is read by a place, so what
+      // changed before that place moved nothing in it, and the change itself
+      // reaches the list by its own news. A page older than the list may
+      // hold cards as they were before a change the list already shows.
+      const listGeneration = gridGenerationRef.current;
+      if (listGeneration === null || grid.generation < listGeneration) {
+        olderThanList = listGeneration !== null;
         return;
       }
+      if (!projectionRevisionOwner.accept("grid", grid.generation)) return;
+      gridGenerationRef.current = grid.generation;
       setBlocks((prev) => {
         const seen = new Set(prev.map((block) => block.id));
         const appended = grid.blocks.filter((block) => !seen.has(block.id));
@@ -2416,8 +2523,10 @@ export function AppWithVault({
       ) {
         setLoadingMoreBlocks(false);
       }
+      // Read now, the page is not older than the list.
+      if (olderThanList) void loadNextPageRef.current({ retry });
     }
-  }, [appliedRouteLoadId, gridLoadError, hasMoreBlocks, invalidateRouteSnapshots, schedulePageRetry]);
+  }, [appliedRouteLoadId, gridLoadError, hasMoreBlocks, projectionRevisionOwner, schedulePageRetry]);
   const loadNextPageRef = useRef(loadNextPage);
   loadNextPageRef.current = loadNextPage;
 
@@ -3088,8 +3197,9 @@ export function AppWithVault({
     unlistenFns.push(listenPage<ThumbUpdatedEvent>("thumb:updated", (event) => {
       if (event.payload.path && event.payload.path !== vaultPathRef.current) return;
       invalidateRouteSnapshots();
-      if (blocksRef.current.some((block) => block.slug === event.payload.slug)) {
-        previewRowsRef.current?.add(event.payload.slug);
+      const shown = blocksRef.current.find((block) => block.slug === event.payload.slug);
+      if (shown) {
+        feedPatchQueueRef.current?.note([shown.id], "preview");
       } else {
         rememberUnseenPreview(unseenPreviewSlugsRef.current, event.payload.slug, Date.now());
       }
@@ -3112,8 +3222,17 @@ export function AppWithVault({
       // tab's place and open card follow renames and leave what is gone
       // (SPEC_TABS.md, В15, В18).
       followSpaceChangeRef.current(event.payload.renames ?? []);
-      invalidateRouteSnapshots();
-      followSpaceNews();
+      // A command of another tab names the cards it changed: this tab reads
+      // those rows. News without the names is read in full (SPEC_FRONTEND.md,
+      // «Обновление ленты»).
+      const cards = event.payload.cards ?? null;
+      if (cards === null) {
+        invalidateRouteSnapshots();
+      } else {
+        dropCachedRoutes();
+        feedPatchQueueRef.current?.note(cards, "news");
+      }
+      followSpaceNews(cards === null);
     }));
 
     unlistenFns.push(listenPage<TabVisibility>(TAB_VISIBILITY_CHANGED_EVENT, (event) => {
@@ -3164,7 +3283,7 @@ export function AppWithVault({
       invalidateRouteSnapshots();
       setIndexRereadAfterLoadId(loadRequestIdRef.current);
       if (indexBuiltOnOpen) {
-        void reloadAllSnapshots().finally(() => {
+        void reloadAllSnapshots("news").finally(() => {
           setIndexBuiltOnOpen(false);
         });
         return;
@@ -3365,36 +3484,103 @@ export function AppWithVault({
       ?? renderedDragBlocks.find((candidate) => candidate.slug === slug);
     return block ? getNavigationLabel(block) : getFileName({ slug });
   }, [blocks, renderedDragBlocks]);
-  const {
-    takeDrop: takeCardDropOnTabBar,
-    dropOnBar: sendCardsToTabBar,
-    leaveBar: leaveTabBar,
-  } = useCardDragToTabBar({
-    enabled: tabPage,
-    dragging: blockDragActive,
-    title: blockDragSlug === null ? "" : cardTitleOf(blockDragSlug),
-  });
-  /// Cards waiting for `Open N tabs?` to be answered (В86, п. 6).
-  const [cardTabsAsked, setCardTabsAsked] = useState<CardBarDrop | null>(null);
-  const openDroppedCardsInTabs = useCallback((x: number, slugs: readonly string[], grabbed: string) => {
-    const views: TabView[] = cardTabsOrder(slugs, blocks.map((block) => block.slug), grabbed).map((slug) => ({
+  /// A tab each for dragged cards (В86, п. 5): the grabbed card's first, the
+  /// rest in the feed's order.
+  const cardTabViews = useCallback((slugs: readonly string[], grabbed: string): TabView[] => (
+    cardTabsOrder(slugs, blocks.map((block) => block.slug), grabbed).map((slug) => ({
       location: currentLocation,
       mode: mainViewMode,
       open_card: { slug, title: cardTitleOf(slug) },
       scroll_anchor: null,
       collection_filter: "",
-    }));
-    // The grabbed card's tab comes first, on the placeholder's slot.
-    const drop: CardBarDrop = { x, title: cardTitleOf(grabbed), views };
-    if (!asksBeforeOpening(views.length)) {
-      sendCardsToTabBar(drop);
-      return;
-    }
-    // The room in the bar closes while the question is open; the tabs come
-    // at the place of the drop once it is answered with Open.
-    leaveTabBar();
-    setCardTabsAsked(drop);
-  }, [blocks, cardTitleOf, currentLocation, leaveTabBar, mainViewMode, sendCardsToTabBar]);
+    }))
+  ), [blocks, cardTitleOf, currentLocation, mainViewMode]);
+  const cardDragInput = useMemo((): CardDragAcrossInput | null => {
+    if (!blockDragActive || blockDragSlug === null) return null;
+    const slugs = blockDragSlugs.length > 0 ? blockDragSlugs : [blockDragSlug];
+    const views = cardTabViews(slugs, blockDragSlug);
+    const stacked = renderedDragBlocks.slice(0, DRAG_STACK_DEPTH);
+    return {
+      drag: blockDragNumber,
+      title: cardTitleOf(blockDragSlug),
+      views,
+      slugs,
+      thumbnail: blockDragFromThumbnail,
+      confirm: asksBeforeOpening(views.length),
+      stack: vaultPath && stacked.length > 0
+        ? {
+            blocks: stacked,
+            thumb_versions: stacked.map((block) => feedThumbVersions.get(block.slug) ?? null),
+            look: outsideLook(vaultPath, thumbsRootPath),
+          }
+        : null,
+    };
+  }, [
+    blockDragActive,
+    blockDragFromThumbnail,
+    blockDragNumber,
+    blockDragSlug,
+    blockDragSlugs,
+    cardTabViews,
+    cardTitleOf,
+    feedThumbVersions,
+    renderedDragBlocks,
+    thumbsRootPath,
+    vaultPath,
+  ]);
+  const cardDrag = useCardDragAcrossWindows({ enabled: tabPage, drag: cardDragInput });
+  /// `Open N tabs?` for cards let go over this window's bar, from this window
+  /// or another (В86, п. 6): the backend asks the window the tabs come in.
+  const [cardTabsAsked, setCardTabsAsked] = useState<number | null>(null);
+  /// The collection row under cards dragged in another window, or the open
+  /// collection's feed under a thumbnail's card (ПК4).
+  const [remoteDropRowKey, setRemoteDropRowKey] = useState<string | null>(null);
+  const [remoteFeedOver, setRemoteFeedOver] = useState(false);
+  /// The sidebar's filter under cards dragged in another window: they found
+  /// an untitled collection there (decision of 16.11.2026).
+  const [remoteSearchOver, setRemoteSearchOver] = useState(false);
+  const foundRemoteRef = useRef<(slugs: string[]) => void>(() => undefined);
+  const attachRemoteRef = useRef<(slugs: string[], tag: string) => void>(() => undefined);
+  const attachRemoteToOpenRef = useRef<(slugs: string[], tag: string) => void>(() => undefined);
+  useEffect(() => {
+    if (!tabPage) return;
+    const subscriptions = [
+      listenPage<CardDragOver>(CARD_DRAG_OVER_EVENT, (event) => {
+        const { point, thumbnail } = event.payload;
+        const row = point ? collectionRowAt(point.x, point.y) : null;
+        setRemoteDropRowKey(row);
+        setRemoteSearchOver(row === null && point !== null && sidebarSearchAt(point.x, point.y));
+        // The rows answer first, as under this page's own drag; the feed of
+        // the open collection takes a thumbnail's card, as its own does.
+        setRemoteFeedOver(row === null && point !== null && thumbnail && openCollectionAt(point.x, point.y) !== null);
+      }),
+      listenPage<CardDragDrop>(CARD_DRAG_DROP_EVENT, (event) => {
+        setRemoteDropRowKey(null);
+        setRemoteFeedOver(false);
+        setRemoteSearchOver(false);
+        const { point, slugs, thumbnail } = event.payload;
+        const row = collectionRowAt(point.x, point.y);
+        if (row !== null) {
+          attachRemoteRef.current(slugs, row.slice(4));
+          return;
+        }
+        if (sidebarSearchAt(point.x, point.y)) {
+          foundRemoteRef.current(slugs);
+          return;
+        }
+        const open = thumbnail ? openCollectionAt(point.x, point.y) : null;
+        if (open !== null) attachRemoteToOpenRef.current(slugs, open);
+      }),
+      listenPage<CardTabsConfirm>(CARD_TABS_CONFIRM_EVENT, (event) => setCardTabsAsked(event.payload.count)),
+    ];
+    return () => {
+      for (const subscription of subscriptions) void subscription.then((unlisten) => unlisten(), () => undefined);
+    };
+  }, [tabPage]);
+  const answerCardTabsAsked = useCallback((open: boolean) => {
+    setCardTabsAsked(null);
+    answerCardTabs(open).catch((error: unknown) => logTabBarFailure("open the elements in new tabs", error));
+  }, []);
 
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
     void openSettingsWindow(section).catch((error: unknown) => {
@@ -3458,12 +3644,6 @@ export function AppWithVault({
       } else if (key === PEEK_WIDTH_STORAGE_KEY) {
         // SPEC_CARD_PEEK.md, О3: the Peek window's width chosen in another tab.
         reloadPeekWidth();
-      } else if (key === COMPACT_STACK_EDGE_STORAGE_KEY) {
-        // TRIAL (PLAN 50.38): the compact stack's edge chosen in another tab.
-        reloadCompactStackEdge();
-      } else if (key === SIDEBAR_STYLE_STORAGE_KEY) {
-        // TRIAL (PLAN 50.38): the sidebar's look chosen in another tab.
-        reloadSidebarStyle();
       } else if (key === CONTENT_FONT_STORAGE_KEY) {
         applyContentFont(getStoredContentFont());
       } else if (key === INTERFACE_FONT_STORAGE_KEY) {
@@ -3656,7 +3836,7 @@ export function AppWithVault({
   }, [selectedBlock]);
 
   // SPEC_CARD_PEEK.md, О1, О9 (user's decision of 30.10.2026): the
-  // open card's buttons choose «Card view» as the Display panel does, stored
+  // open card's buttons choose «Element view» as the Display panel does, stored
   // and told to every tab and window, and this card follows it at once.
   const chooseOpenCardView = useCallback((next: CardView) => {
     setCardView(next);
@@ -4228,9 +4408,8 @@ export function AppWithVault({
   /// rejects before anything is written, and the place where the name was
   /// typed shows why (05.10.2026); what follows a creation that was taken
   /// does not make it refused: its own failure is a notice of this tab.
-  const createCollection = useCallback(
-    async (name: string, contents: PendingCreateChannelDrop | null): Promise<ChannelDto> => {
-      const channel = await createChannel(name);
+  const fillCollection = useCallback(
+    async (channel: ChannelDto, contents: PendingCreateChannelDrop | null): Promise<ChannelDto> => {
       dismissActionFailure("create-collection");
       if (contents?.type === "block" || contents?.type === "blocks") {
         await attachBlocksToTag(
@@ -4274,6 +4453,28 @@ export function AppWithVault({
     },
     [attachBlocksToTag, invalidateRoutesForTags, reloadAllSnapshots],
   );
+  const createCollection = useCallback(
+    async (name: string, contents: PendingCreateChannelDrop | null): Promise<ChannelDto> => (
+      fillCollection(await createChannel(name), contents)
+    ),
+    [fillCollection],
+  );
+
+  /// A collection with no name typed, the first free untitled one, holding
+  /// `contents` (decisions of 16.11.2026: `+` with an empty filter, a card
+  /// dropped on the filter). Nothing names it, so a failure is a notice.
+  const createUntitledCollection = useCallback(
+    async (contents: PendingCreateChannelDrop | null): Promise<ChannelDto | null> => {
+      try {
+        return await fillCollection(await createUntitledChannel(), contents);
+      } catch (err) {
+        reportActionError("create-collection", CREATE_COLLECTION_FAILED_TITLE, err, NOTHING_CHANGED);
+        await reloadAllSnapshots();
+        return null;
+      }
+    },
+    [fillCollection, reloadAllSnapshots],
+  );
 
   /// A creation whose place for the name is gone by the time it is refused:
   /// a picker's row, which the press cleared. Its failure is a notice.
@@ -4291,45 +4492,44 @@ export function AppWithVault({
     [createCollection, reloadAllSnapshots],
   );
 
-  // The sidebar's row: what is dragged onto it goes into the collection. A
-  // refusal rejects, so the row keeps its field with the reason, and keeps
-  // what the collection was to take for the name that follows.
+  // The sidebar's creation row, where a refused name is typed again: a
+  // refusal rejects, so the row keeps its field with the reason.
   const handleSidebarCreateCollection = useCallback(
     async (name: string) => {
-      await createCollection(name, pendingCreateChannelDrop);
-      setPendingCreateChannelDrop(null);
+      await createCollection(name, null);
     },
-    [createCollection, pendingCreateChannelDrop],
-  );
-
-  // The window of the closed sidebar and of the collection switcher: a
-  // refusal rejects, and the window shows it.
-  const handleWindowCreateCollection = useCallback(
-    (name: string) => createCollection(name, null),
     [createCollection],
   );
 
   const handleSetCreatingChannel = useCallback((creating: boolean) => {
-    setPendingCreateChannelDrop(null);
     if (creating) setCreateRowByKey(false);
     setIsCreatingChannel(creating);
   }, []);
 
-  /// Where a new collection is named depends on whether its future row is
-  /// visible. Open sidebar: in the list, in the row it will occupy. Closed: in
-  /// a dialog, because that row has nowhere to appear and the command used to
-  /// do nothing at all.
-  /// `byKey`: ⇧⌘N, whose row parts the list at once (SPEC_MOTION_LEVELS.md,
-  /// С8); `+` parts it by the level.
+  /// `+` and ⇧⌘N make a collection at once (decisions of 16.11.2026): with
+  /// the name typed in the filter, or, with none typed, the first free
+  /// untitled one. A typed name that is refused opens the creation row with
+  /// it, where the reason stands under the name, as Enter in the filter does
+  /// (DESIGN_SYSTEM.md, «Создание коллекции»). `byKey`: ⇧⌘N, whose row then
+  /// stands at once (SPEC_MOTION_LEVELS.md, С8).
   const beginCreateCollection = useCallback((byKey = false) => {
-    setPendingCreateChannelDrop(null);
-    if (!sidebarShown) {
-      setIsNamingCollection(true);
+    const typed = sidebarSearchQuery.trim();
+    if (!typed) {
+      void createUntitledCollection(null);
       return;
     }
-    setCreateRowByKey(byKey);
-    setIsCreatingChannel(true);
-  }, [sidebarShown]);
+    void checkNewCollectionName(typed).then((refusal) => {
+      // The row stands in the shown sidebar; with the sidebar closed the
+      // refusal is a notice of the tab.
+      if (refusal !== null && sidebarShown) {
+        setCreateRowByKey(byKey);
+        setIsCreatingChannel(true);
+        return;
+      }
+      if (refusal === null) handleClearSidebarSearch();
+      void createCollectionReporting(typed, null);
+    });
+  }, [checkNewCollectionName, createCollectionReporting, createUntitledCollection, handleClearSidebarSearch, sidebarSearchQuery, sidebarShown]);
 
   const activateSidebarSearchNavigationRow = useCallback((rowKey: string | null) => {
     if (!rowKey) return;
@@ -4424,7 +4624,6 @@ export function AppWithVault({
     // (SPEC_MOTION_LEVELS.md, С8, УД4, п. 8; user's decision of 12.11.2026).
     void checkNewCollectionName(name).then((refusal) => {
       if (refusal !== null) {
-        setPendingCreateChannelDrop(null);
         setCreateRowByKey(true);
         setIsCreatingChannel(true);
         return;
@@ -4442,12 +4641,6 @@ export function AppWithVault({
     sidebarSearchHasValue,
     sidebarSearchQuery,
   ]);
-
-  const beginCreateChannelFromDrop = useCallback((pendingDrop: PendingCreateChannelDrop) => {
-    setPendingCreateChannelDrop(pendingDrop);
-    setCreateRowByKey(false);
-    setIsCreatingChannel(true);
-  }, []);
 
   // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
 
@@ -4492,20 +4685,29 @@ export function AppWithVault({
     [attachBlocksToTag, reloadAllSnapshots],
   );
 
+  attachRemoteRef.current = (slugs, tag) => {
+    if (slugs.length > 1) void handleCardsDrop(slugs, tag);
+    else if (slugs[0]) void handleCardDrop(slugs[0], tag);
+  };
+  foundRemoteRef.current = (slugs) => {
+    const [first] = slugs;
+    if (first === undefined) return;
+    void createUntitledCollection(slugs.length > 1 ? { type: "blocks", slugs } : { type: "block", slug: first });
+  };
+  // Each card as its own feed takes one: a card already in the collection
+  // stays as it is (SPEC_FRONTEND.md, «Бросок миниатюры в открытую коллекцию»).
+  attachRemoteToOpenRef.current = (slugs, tag) => {
+    for (const slug of slugs) void handleCardDropOnOpenCollection(slug, tag);
+  };
+
   const handleMediaAssetDrop = useCallback(
     async (payload: MediaAssetDragPayload, tag: string) => {
       try {
-        const block = await createMediaAssetCard({
+        await createMediaAssetCard({
           source_slug: payload.asset.source_slug,
           media_ref: payload.asset.media_ref,
           target_tag: tag,
         });
-        invalidateRoutesForTags(block.tags);
-        scheduleRefresh({
-          grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
-          taxonomy: true,
-          previews: true,
-        }, 0, { force: true });
       } catch (err) {
         // The drop made no element: the tab says so (Н11).
         reportActionFailure({
@@ -4516,16 +4718,17 @@ export function AppWithVault({
         // The collection's page went (deleted outside Mine): the lists read
         // again and it leaves them, as after any refused connect (К7).
         if (isCollectionNotFound(err)) await reloadAllSnapshots();
+        return;
       }
+      await reloadAllSnapshots();
     },
-    [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   const handleMediaAssetCreateCard = useCallback(
     async (asset: MediaAssetRef, tag: string) => {
-      let block: IndexedBlock;
       try {
-        block = await createMediaAssetCard({
+        await createMediaAssetCard({
           source_slug: asset.source_slug,
           media_ref: asset.media_ref,
           target_tag: tag,
@@ -4534,14 +4737,9 @@ export function AppWithVault({
         if (isCollectionNotFound(err)) await reloadAllSnapshots();
         throw err;
       }
-      invalidateRoutesForTags(block.tags);
-      scheduleRefresh({
-        grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
-        taxonomy: true,
-        previews: true,
-      }, 0, { force: true });
+      await reloadAllSnapshots();
     },
-    [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   // The new card's own failure stays in its menu, which waits for it.
@@ -4559,43 +4757,25 @@ export function AppWithVault({
         media_ref: asset.media_ref,
         new_stem: newStem,
       });
-      invalidateRouteSnapshots();
-      scheduleRefresh({
-        grid: true,
-        taxonomy: true,
-        previews: true,
-      }, 0, { force: true });
-      window.dispatchEvent(new Event("vault-refreshed"));
+      await reloadAllSnapshots();
     },
-    [invalidateRouteSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   const handleMediaAssetDelete = useCallback(
     async (asset: MediaAssetRef) => {
       await deleteMediaAsset(asset.media_ref);
-      invalidateRouteSnapshots();
-      scheduleRefresh({
-        grid: true,
-        taxonomy: true,
-        previews: true,
-      }, 0, { force: true });
-      window.dispatchEvent(new Event("vault-refreshed"));
+      await reloadAllSnapshots();
     },
-    [invalidateRouteSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   const handleSourceVideoDelete = useCallback(
     async (slug: string) => {
       await deleteSourceVideo(slug);
-      invalidateRouteSnapshots();
-      scheduleRefresh({
-        grid: true,
-        taxonomy: true,
-        previews: true,
-      }, 0, { force: true });
-      window.dispatchEvent(new Event("vault-refreshed"));
+      await reloadAllSnapshots();
     },
-    [invalidateRouteSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   // The shell already wrote the file and the card; the views only reload.
@@ -4617,21 +4797,15 @@ export function AppWithVault({
         reference_kind: asset.reference_kind,
         occurrence_index: asset.occurrence_index ?? null,
       });
-      invalidateRouteSnapshots();
-      scheduleRefresh({
-        grid: true,
-        taxonomy: true,
-        previews: true,
-      }, 0, { force: true });
-      window.dispatchEvent(new Event("vault-refreshed"));
+      await reloadAllSnapshots();
     },
-    [invalidateRouteSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   const handleTextSelectionDrop = useCallback(
     async (payload: MineTextSelectionDragPayload, tag: string) => {
       try {
-        const block = await extractTextSelection({
+        await extractTextSelection({
           source_slug: payload.sourceSlug,
           target_tag: tag,
           selected_text: payload.selectedText,
@@ -4640,20 +4814,15 @@ export function AppWithVault({
           source_body_hash: payload.sourceBodyHash,
           source_range: payload.sourceRange ?? null,
         });
-        invalidateRoutesForTags(block.tags);
-        scheduleRefresh({
-          grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
-          taxonomy: true,
-          previews: true,
-        }, 0, { force: true });
       } catch (err) {
         console.error("Failed to extract text selection:", err);
         // The collection's page went: the lists read again (К7).
         if (isCollectionNotFound(err)) await reloadAllSnapshots();
         throw err;
       }
+      await reloadAllSnapshots();
     },
-    [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   const handleTextSelectionCreateChannelAndCard = useCallback(
@@ -4674,23 +4843,17 @@ export function AppWithVault({
           first_block_end: payload.firstBlockEnd,
           source_body_hash: payload.sourceBodyHash,
         });
-        invalidateRouteSnapshots();
         setSelectedBlock((current) => (
           current?.slug === block.slug ? block : current
         ));
         setSelectedBlockTags(block.tags);
-        scheduleRefresh({
-          grid: true,
-          taxonomy: true,
-          previews: true,
-        }, 0, { force: true });
-        window.dispatchEvent(new Event("vault-refreshed"));
       } catch (err) {
         console.error("Failed to delete text selection:", err);
         throw err;
       }
+      await reloadAllSnapshots();
     },
-    [invalidateRouteSnapshots, scheduleRefresh],
+    [reloadAllSnapshots],
   );
 
   /// Ends the card part of a drag; a card read still on its way draws nothing.
@@ -4746,6 +4909,9 @@ export function AppWithVault({
         const sequence = blockDragSequenceRef.current + 1;
         blockDragSequenceRef.current = sequence;
         setBlockDragSlug(data?.type === "block" && data.slug ? data.slug : id);
+        setBlockDragSlugs(resolveBlockDragSlugs(id, data));
+        setBlockDragNumber(sequence);
+        setBlockDragFromThumbnail(isSidebarThumbnailDragId(id));
         const dragBlocks = resolveBlockDragBlocks(id, data, blocks);
         setActiveDragBlocks(dragBlocks);
         setBlockDragActive(true);
@@ -4775,20 +4941,16 @@ export function AppWithVault({
 
   const handleDndEnd = useCallback(
     (event: DragEndEvent) => {
-      // Let go over the tab bar: a tab each, whatever the card is over in
-      // this page (В86). The bar takes card drags only.
-      const tabBarX = takeCardDropOnTabBar();
+      // Let go outside this page, over a bar, another window or none: the
+      // backend took the drop, whatever the card is over in this page
+      // (В86; SPEC_OUTSIDE_WINDOW.md, ПК4).
+      const releasedOutside = cardDrag.releasedOutside();
       clearBlockDrag();
       setActiveDragTag(null);
       setActiveDragMediaAsset(null);
       setActiveDragTextSelection(null);
       const { active, over } = event;
-      if (tabBarX !== null) {
-        const data = active.data.current as Partial<BlockDragData> | undefined;
-        const grabbed = data?.type === "block" && data.slug ? data.slug : String(active.id);
-        openDroppedCardsInTabs(tabBarX, resolveBlockDragSlugs(String(active.id), data), grabbed);
-        return;
-      }
+      if (releasedOutside) return;
       if (!over) {
         clearActiveMineTextSelectionDragPayload();
         return;
@@ -4801,8 +4963,8 @@ export function AppWithVault({
         slug?: string;
       } & Partial<BlockDragData> & Partial<MediaAssetDragPayload> & Partial<MineTextSelectionDragPayload>) | undefined;
       if (activeData?.type === "media_asset") {
-        if (overId === "create-channel") {
-          beginCreateChannelFromDrop({
+        if (overId === SIDEBAR_SEARCH_DROP_ID) {
+          void createUntitledCollection({
             type: "media_asset",
             payload: activeData as MediaAssetDragPayload,
           });
@@ -4819,8 +4981,8 @@ export function AppWithVault({
           ? getActiveMineTextSelectionDragPayload()
           : null;
       if (textSelectionPayload) {
-        if (overId === "create-channel") {
-          beginCreateChannelFromDrop({
+        if (overId === SIDEBAR_SEARCH_DROP_ID) {
+          void createUntitledCollection({
             type: "text_selection",
             payload: textSelectionPayload,
           });
@@ -4849,8 +5011,11 @@ export function AppWithVault({
         return;
       }
 
-      if (!activeIsTag && overId === "create-channel") {
-        beginCreateChannelFromDrop(
+      // A card dropped on the sidebar's filter founds an untitled collection
+      // with it (decision of 16.11.2026: the one way to make a collection by
+      // a drag).
+      if (!activeIsTag && overId === SIDEBAR_SEARCH_DROP_ID) {
+        void createUntitledCollection(
           activeSlugs.length > 1
             ? { type: "blocks", slugs: activeSlugs }
             : { type: "block", slug: activeSlug },
@@ -4880,7 +5045,7 @@ export function AppWithVault({
       }
     },
     [
-      beginCreateChannelFromDrop,
+      createUntitledCollection,
       clearBlockDrag,
       handleCardDrop,
       handleCardDropOnOpenCollection,
@@ -4888,8 +5053,7 @@ export function AppWithVault({
       handleMediaAssetDrop,
       handleReorderTag,
       handleTextSelectionDrop,
-      openDroppedCardsInTabs,
-      takeCardDropOnTabBar,
+      cardDrag,
     ],
   );
 
@@ -4952,15 +5116,14 @@ export function AppWithVault({
       try {
         return await applyMembership(slugs, tag, connected);
       } finally {
-        invalidateRoutesForTags([tag]);
-        scheduleRefresh({
-          grid: currentTagRef.current === undefined || currentTagRef.current === tag,
-          taxonomy: true,
-          previews: true,
-        }, BATCH_TAG_REFRESH_DELAY_MS);
+        dropCachedRoutes();
+        // The cards the command named are read at once; the collections and
+        // the sidebar previews wait for more of a run of presses.
+        void readFeedAfterOwnChange();
+        scheduleRefresh({ taxonomy: true, previews: true }, BATCH_TAG_REFRESH_DELAY_MS);
       }
     },
-    [applyMembership, invalidateRoutesForTags, scheduleRefresh],
+    [applyMembership, dropCachedRoutes, readFeedAfterOwnChange, scheduleRefresh],
   );
 
   // The group selection's `Create collection`: the page first, then the
@@ -5222,8 +5385,9 @@ export function AppWithVault({
         className="h-full w-px shrink-0 bg-border"
         data-top-chrome-search-separator=""
       />
-      <div
+      <SidebarSearchDropTarget
         {...sidebarSearchChromeDragGesture}
+        remoteOver={remoteSearchOver}
         className={[
           // Empty, the field is chrome like the rest of the row; a
           // query gives it the table's surface (05.10.2026).
@@ -5289,7 +5453,7 @@ export function AppWithVault({
             <Plus />
           </Button>
         </div>
-      </div>
+      </SidebarSearchDropTarget>
     </div>
   );
 
@@ -5325,7 +5489,8 @@ export function AppWithVault({
       onCheckCollectionName={checkCollectionName}
       onOpenBlock={handleSidebarOpenBlock}
       onOpenCardMenu={openCardActionsMenu}
-      hoverPreviewFrozen={cardActionsMenuTarget !== null}
+      hoverPreviewFrozen={cardPointMenuOpen}
+      remoteDropRowKey={remoteDropRowKey}
       onToggleTag={handleToggleTag}
       onCreateAndAssign={handleCreateTagFromMenu}
       onRequestRename={handleRequestRename}
@@ -5784,7 +5949,7 @@ export function AppWithVault({
                 onLoadMoreBlocks={loadMoreBlocks}
                 onOpenBlock={openDetailBlock}
                 onOpenCardMenu={openCardActionsMenu}
-                hoverPreviewFrozen={cardActionsMenuTarget !== null}
+                hoverPreviewFrozen={cardPointMenuOpen}
                 onNavigateCollection={handleTopCollectionNavigate}
                 acceptGraphRevision={acceptGraphRevision}
                 onInstallClipper={revealClipperExtensionFolder}
@@ -5806,7 +5971,7 @@ export function AppWithVault({
         {/* A sidebar thumbnail's card joins the open collection when dropped
             on its feed or graph; an open card covers both. */}
         {currentTag !== undefined && !renderedDetailBlock && (
-          <OpenCollectionDropTarget tag={currentTag} />
+          <OpenCollectionDropTarget tag={currentTag} remoteOver={remoteFeedOver} />
         )}
 
         {/* The full page, unseen and out of reach while the window goes to it
@@ -5835,11 +6000,9 @@ export function AppWithVault({
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
         <OpenCardTabsDialog
-          count={cardTabsAsked?.views.length ?? null}
-          onCancel={() => setCardTabsAsked(null)}
-          onConfirm={() => {
-            if (cardTabsAsked !== null) sendCardsToTabBar(cardTabsAsked);
-          }}
+          count={cardTabsAsked}
+          onCancel={() => answerCardTabsAsked(false)}
+          onConfirm={() => answerCardTabsAsked(true)}
         />
       </main>
 
@@ -5977,26 +6140,17 @@ export function AppWithVault({
         onRequestDelete={requestDeleteBlock}
         scrimHandedOver={searchOverlayOpen && searchScrimHandedOver}
       />
-      {cardActionsMenuTarget ? (
-        <CardPointMenu
-          block={cardActionsMenuTarget.block}
-          vaultPath={vaultPath}
-          tags={orderedTags}
-          currentTag={currentTag}
-          x={cardActionsMenuTarget.x}
-          y={cardActionsMenuTarget.y}
-          openRequestSequence={cardActionsMenuTarget.sequence}
-          onToggleTag={handleToggleTag}
-          onCreateAndAssign={handleCreateTagFromMenu}
-          onRequestRename={handleRequestRename}
-          onRequestDelete={requestDeleteBlock}
-          onOpenChange={(open) => {
-            if (!open) {
-              setCardActionsMenuTarget(null);
-            }
-          }}
-        />
-      ) : null}
+      <CardPointMenuHost
+        handleRef={cardPointMenuRef}
+        vaultPath={vaultPath}
+        tags={orderedTags}
+        currentTag={currentTag}
+        onToggleTag={handleToggleTag}
+        onCreateAndAssign={handleCreateTagFromMenu}
+        onRequestRename={handleRequestRename}
+        onRequestDelete={requestDeleteBlock}
+        onOpenChange={setCardPointMenuOpen}
+      />
     </div>{/* end body */}
 
         {/* SPEC_CARD_PEEK.md: the card in its window over the right
@@ -6071,13 +6225,6 @@ export function AppWithVault({
         </ChromeRow>
       )}
 
-      <CreateCollectionDialog
-        open={isNamingCollection}
-        onOpenChange={setIsNamingCollection}
-        onCheckName={checkNewCollectionName}
-        onCreate={handleWindowCreateCollection}
-      />
-
       {/* An author's feed is a computed selection a dropped file cannot
           join: the drop zone stays off there (SPEC_CARD_ASSOCIATIONS.md). */}
       {!onAuthorPlace && (
@@ -6122,12 +6269,16 @@ export function AppWithVault({
       style={{ pointerEvents: "none" }}
     >
       {activeDragBlocks.length > 0 && (
-        <DragCardStackPreview
-          blocks={renderedDragBlocks}
-          thumbVersions={feedThumbVersions}
-          vaultPath={vaultPath}
-          thumbsRootPath={thumbsRootPath ?? undefined}
-        />
+        // Drawn outside, the page's card goes unseen and keeps its box, which
+        // the page's targets are found by (SPEC_OUTSIDE_WINDOW.md, ПК2).
+        <div style={cardDrag.shownOutside ? { visibility: "hidden" } : undefined} data-drag-shown-outside={cardDrag.shownOutside ? "" : undefined}>
+          <DragCardStackPreview
+            blocks={renderedDragBlocks}
+            thumbVersions={feedThumbVersions}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath ?? undefined}
+          />
+        </div>
       )}
       {activeDragMediaAsset && activeDragMediaAsset.src && (
         // Single sizing owner: the img box. A max-h/max-w pair on an <img>
@@ -6243,7 +6394,7 @@ interface RouteContext {
 /// коллекцию»). It covers the right part of the window, lets the pointer
 /// through, and is off for every other drag. While the card is over it, it
 /// wears the design system's isolated drop target frame.
-function OpenCollectionDropTarget({ tag }: { tag: string }) {
+function OpenCollectionDropTarget({ tag, remoteOver }: { tag: string; remoteOver: boolean }) {
   const { active } = useDndContext();
   const carriesThumbnail = active !== null && isSidebarThumbnailDragId(active.id);
   const { setNodeRef, isOver } = useDroppable({
@@ -6256,10 +6407,10 @@ function OpenCollectionDropTarget({ tag }: { tag: string }) {
       aria-hidden="true"
       className={cn(
         "pointer-events-none absolute inset-0 z-20",
-        isOver && "ring-2 ring-ring ring-inset",
+        (isOver || remoteOver) && "ring-2 ring-ring ring-inset",
       )}
       data-open-collection-drop={tag}
-      data-open-collection-drop-over={isOver ? "true" : undefined}
+      data-open-collection-drop-over={isOver || remoteOver ? "true" : undefined}
     />
   );
 }

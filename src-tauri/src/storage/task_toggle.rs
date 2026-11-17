@@ -198,7 +198,7 @@ fn toggled_note(
         // A collection page is no card: its row is a collection's, and the
         // reading view never shows it.
         return Err(TaskToggleError::internal(format!(
-            "'{slug}' is a collection page, not a card"
+            "'{slug}' is a collection page, not an element"
         )));
     }
     let body = read.parsed.block.body.as_str();

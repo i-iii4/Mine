@@ -315,6 +315,50 @@ pub fn find_first_existing_article_media(
     None
 }
 
+/// The first file the pictures of `block` may be made from whose contents
+/// are in iCloud, as the card names it and as a path: its media file, its
+/// poster, or a picture or video of its body. Only file flags are read
+/// (`cloud_files::is_content_offloaded`), so asking never brings a file down.
+///
+/// The paths that make a card's pictures ask it before they read: a reader
+/// that may not wait for iCloud leaves such a card as it is, and none of
+/// them ever stands a text placeholder for media that is merely elsewhere
+/// (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
+pub fn first_preview_source_in_cloud(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> Option<(String, PathBuf)> {
+    let named = [block.frontmatter.file.as_deref(), block.frontmatter.thumbnail.as_deref()];
+    for reference in named.into_iter().flatten() {
+        if is_remote_media(reference) {
+            continue;
+        }
+        if let Some(path) = resolver.resolve_indexed_media(&block.slug, reference) {
+            if crate::storage::cloud_files::is_content_offloaded(&path) {
+                return Some((reference.to_string(), path));
+            }
+        }
+    }
+    if !has_body_media(block) {
+        return None;
+    }
+    for reference in iter_inline_media_references(&block.body) {
+        if reference.source.is_empty() || is_remote_media(&reference.source) {
+            continue;
+        }
+        let ext = media_ext_lower(&reference.source).unwrap_or_default();
+        if !is_image_ext(&ext) && !is_video_ext(&ext) {
+            continue;
+        }
+        if let Some(path) = resolver.resolve_inline_media(&block.slug, &reference) {
+            if crate::storage::cloud_files::is_content_offloaded(&path) {
+                return Some((reference.source, path));
+            }
+        }
+    }
+    None
+}
+
 /// Up to `limit` decodable body images that resolve to files.
 pub fn collect_article_preview_images(
     block: &Block,

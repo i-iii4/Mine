@@ -53,7 +53,7 @@ describe("cardView", () => {
       expect(over(471)).toBe("peek");
     });
 
-    it("offers the way to the window full page whenever the right part holds it, whatever «Card view»", () => {
+    it("offers the way to the window full page whenever the right part holds it, whatever «Element view»", () => {
       expect(offersPeekCollapse({ chosen: "full", areaHolds: true })).toBe(true);
       expect(offersPeekCollapse({ chosen: "full", areaHolds: false })).toBe(false);
       // Peek too narrow for the window: full page, and no way to a window

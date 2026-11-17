@@ -11,7 +11,7 @@
 use std::ops::Range;
 
 use percent_encoding::percent_decode_str;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use thiserror::Error;
 
@@ -98,7 +98,7 @@ pub enum BlockError {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /// The type of content a block represents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum BlockType {
     Image,
@@ -145,7 +145,7 @@ impl BlockType {
 /// `type` remains legacy source metadata in frontmatter. Feed/detail rendering
 /// should use this derived category instead. Body shape remains primary, while
 /// ownership metadata distinguishes bodyless media from metadata-only links.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum CardKind {
     Article,

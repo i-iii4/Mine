@@ -141,11 +141,11 @@ export function sidebarEqualZonesWidth(): number {
 }
 
 // ── Compact rows ────────────────────────────────────────────────────────────
-// Experiment of 22.10.2026 (PLAN 50.36, DESIGN_SYSTEM.md, «Компактная строка
-// боковой панели»): below a width the rows drop the three zones, the count goes
-// under the name and the previews become the 7.23 stack of three mini-cards
-// in the meta zone. The width is not chosen; it is where the previews stop
-// showing three thumbnails clear of their edge.
+// Below a width the rows drop the three zones and the previews and become
+// the List, the collections' names as a table of contents (PLAN 50.36, 50.38;
+// DESIGN_SYSTEM.md, «Компактная строка боковой панели»). The width is not
+// chosen; it is where the previews stop showing three thumbnails clear of
+// their edge.
 
 /// The panel's own right border (`border-r` on the sidebar): the rows are this
 /// much narrower than `--sidebar-width`.

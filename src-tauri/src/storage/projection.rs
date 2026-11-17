@@ -29,21 +29,47 @@ pub struct GridSnapshot {
     pub has_more: bool,
 }
 
-/// A bounded row patch, never a replacement for route membership or pagination.
-#[derive(Debug, Clone, Serialize, specta::Type)]
-pub struct GridRowsSnapshot {
+/// The named cards as the feed of a place holds them now: what a page that
+/// knows which cards changed reads instead of the whole feed
+/// (SPEC_STORAGE.md, «Частичное чтение ленты»).
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
+pub struct FeedPatch {
     pub path: String,
     pub generation: ProjectionRevision,
-    pub blocks: Vec<LightBlock>,
+    /// The named cards that stand in the feed within the page's range, in
+    /// feed order. A named card that is not here left the page's list.
+    pub rows: Vec<crate::storage::block_queries::FeedPatchRow>,
+    pub total_blocks: usize,
+    /// Whether the feed holds cards after the page's range.
+    pub has_more: bool,
+    /// The page's last card is not in the feed, so its range cannot be told:
+    /// the page reads the feed in full.
+    pub range_lost: bool,
 }
 
-/// Read committed rows and their revision atomically, without filesystem work.
-pub fn read_grid_rows(conn: &Connection, path: String, slugs: &[String]) -> Result<GridRowsSnapshot> {
-    read_projection_snapshot(conn, |conn, generation| Ok(GridRowsSnapshot {
-        path,
-        generation,
-        blocks: crate::storage::block_queries::grid_rows_by_slug(conn, slugs)?,
-    }))
+/// Read the cards `cards` of the feed of `location`, their places, the
+/// revision and the totals under one snapshot. `end` is the last card the
+/// page holds that is not among `cards`; `None` when it holds the whole feed.
+pub fn read_feed_patch(
+    conn: &Connection,
+    path: String,
+    location: &crate::domain::windows::TabLocation,
+    order: crate::storage::block_queries::FeedOrder,
+    cards: &[i64],
+    end: Option<i64>,
+) -> Result<FeedPatch> {
+    read_projection_snapshot(conn, |conn, generation| {
+        let patch =
+            crate::storage::block_queries::feed_patch_rows(conn, location, order, cards, end)?;
+        Ok(FeedPatch {
+            path,
+            generation,
+            rows: patch.rows,
+            total_blocks: index::count_grid_blocks(conn)?,
+            has_more: patch.has_more,
+            range_lost: patch.range_lost,
+        })
+    })
 }
 
 /// Return the persisted identity of the currently committed projection.
@@ -102,18 +128,24 @@ pub fn read_projection_snapshot<T>(
 pub fn read_grid_snapshot(
     conn: &Connection,
     location: &crate::domain::windows::TabLocation,
-    offset: usize,
+    after: Option<&crate::storage::block_queries::FeedPageToken>,
     limit: usize,
     order: crate::storage::block_queries::FeedOrder,
 ) -> Result<GridSnapshot> {
     read_projection_snapshot(conn, |conn, generation| {
-        let (blocks, has_more) = crate::storage::block_queries::list_grid_blocks_in_order(
-            conn, location, offset, limit, order,
+        let total_blocks = index::count_grid_blocks(conn)?;
+        let (blocks, has_more) = crate::storage::block_queries::list_feed_page(
+            conn,
+            location,
+            after,
+            limit,
+            order,
+            total_blocks,
         )?;
         Ok(GridSnapshot {
             generation,
             blocks,
-            total_blocks: index::count_grid_blocks(conn)?,
+            total_blocks,
             has_more,
         })
     })
@@ -172,25 +204,38 @@ mod tests {
         assert!(current_generation(&conn).unwrap() > after_preview);
     }
 
+    /// The partial read of a card whose preview became ready gives the row a
+    /// full read gives, at the newer revision; a card that is gone is not
+    /// answered.
     #[test]
-    fn grid_row_batch_matches_feed_and_tracks_readiness() {
+    fn feed_patch_matches_the_feed_and_tracks_readiness() {
+        use crate::domain::windows::TabLocation;
+        use crate::storage::block_queries::FeedOrder;
+
         let conn = db::open_memory().unwrap();
         index::upsert_block(&conn, &block("one"), None).unwrap();
         index::upsert_block(&conn, &block("other"), None).unwrap();
-        let slugs = vec!["one".into(), "one".into(), "missing".into()];
-        let before = read_grid_rows(&conn, "/vault".into(), &slugs).unwrap();
-        assert_eq!(before.blocks.len(), 1);
-        assert!(before.blocks[0].preview_manifest.is_none());
+        let one: i64 = conn
+            .query_row("SELECT id FROM blocks WHERE slug = 'one'", [], |row| row.get(0))
+            .unwrap();
+        let cards = [one, one, 9_999];
+        let read = |conn: &Connection| {
+            read_feed_patch(conn, "/vault".into(), &TabLocation::Everything, FeedOrder::Newest, &cards, None)
+                .unwrap()
+        };
+        let before = read(&conn);
+        assert_eq!(before.rows.len(), 1);
+        assert!(before.rows[0].block.preview_manifest.is_none());
         conn.execute("UPDATE blocks SET preview_state = 'ready', preview_manifest = '{}' WHERE slug = 'one'", []).unwrap();
-        let after = read_grid_rows(&conn, "/vault".into(), &slugs).unwrap();
+        let after = read(&conn);
         assert!(after.generation > before.generation);
         assert_eq!(after.path, "/vault");
-        let full = read_grid_snapshot(&conn, &crate::domain::windows::TabLocation::Everything, 0, 20, crate::storage::block_queries::FeedOrder::Newest).unwrap();
-        assert_eq!(&after.blocks[0], full.blocks.iter().find(|row| row.slug == "one").unwrap());
-        assert_eq!(after.blocks[0].preview_manifest.as_deref(), Some("{}"));
+        assert_eq!(after.total_blocks, 2);
+        let full = read_grid_snapshot(&conn, &TabLocation::Everything, None, 20, FeedOrder::Newest).unwrap();
+        assert_eq!(&after.rows[0].block, full.blocks.iter().find(|row| row.slug == "one").unwrap());
+        assert_eq!(after.rows[0].block.preview_manifest.as_deref(), Some("{}"));
         index::remove_block(&conn, "one").unwrap();
-        assert!(read_grid_rows(&conn, "/vault".into(), &slugs).unwrap().blocks.is_empty());
-        assert!(read_grid_rows(&conn, "/vault".into(), &[]).unwrap().blocks.is_empty());
+        assert!(read(&conn).rows.is_empty());
     }
 
     #[test]
@@ -198,7 +243,7 @@ mod tests {
         let conn = db::open_memory().unwrap();
         index::upsert_block(&conn, &block("one"), None).unwrap();
 
-        let snapshot = read_grid_snapshot(&conn, &crate::domain::windows::TabLocation::Everything, 0, 20, crate::storage::block_queries::FeedOrder::Newest).unwrap();
+        let snapshot = read_grid_snapshot(&conn, &crate::domain::windows::TabLocation::Everything, None, 20, crate::storage::block_queries::FeedOrder::Newest).unwrap();
 
         assert_eq!(snapshot.generation, current_generation(&conn).unwrap());
         assert_eq!(snapshot.total_blocks, 1);

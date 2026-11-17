@@ -10,6 +10,7 @@ import type { MenuEntry, MenuSpec, MenuWidget, TagCount } from "@/types";
 import { COPY_LINK_FAILED_TITLE, COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "./clipboard";
 import { collectionRefLabel } from "./collections";
 import type { EditorTableMenuCommand } from "./editorTableMenu";
+import { menuItem, menuSubmenu } from "./menuSpec";
 import { openLinkInBrowser, revealInFinder } from "./systemActions";
 
 const ITEM_IDS = ["source", "copy-link", "reveal", "copy-path", "rename", "disconnect", "delete"] as const;
@@ -66,42 +67,23 @@ export interface CardMenuSpecInput {
   picker: CardMenuPicker;
 }
 
-function item(id: CardMenuItemId, label: string, more: Partial<Pick<Extract<MenuEntry, { kind: "item" }>, "icon" | "variant" | "truncate">> = {}): MenuEntry {
-  return { kind: "item", id, label, icon: more.icon ?? null, variant: more.variant ?? "default", truncate: more.truncate ?? false };
+function item(id: CardMenuItemId, label: string, more: Parameters<typeof menuItem>[2] = {}): MenuEntry {
+  return menuItem(id, label, more);
 }
 
 /** The card menu: `More`, the right click and ⌘K show this one menu. */
 export function cardMenuSpec({ hasUrl, disconnectFrom, tableCommands, picker }: CardMenuSpecInput): MenuSpec {
   const entries: MenuEntry[] = [
-    {
-      kind: "submenu",
-      id: CARD_MENU_CONNECT_ID,
-      label: "Connect",
-      icon: "plus",
-      content: cardConnectSpec(picker),
-    },
+    menuSubmenu(CARD_MENU_CONNECT_ID, "Connect", cardConnectSpec(picker), { icon: "plus" }),
   ];
   if (tableCommands.length > 0) {
-    entries.push({
-      kind: "submenu",
-      id: CARD_MENU_TABLE_ID,
-      label: "Table",
-      icon: null,
-      content: {
-        role: "action",
-        entries: tableCommands.flatMap((command): MenuEntry[] => [
-          ...(command.separatorBefore ? [{ kind: "separator" } as const] : []),
-          {
-            kind: "item",
-            id: `${TABLE_COMMAND_PREFIX}${command.id}`,
-            label: command.label,
-            icon: null,
-            variant: command.destructive ? "destructive" : "default",
-            truncate: false,
-          },
-        ]),
-      },
-    });
+    entries.push(menuSubmenu(CARD_MENU_TABLE_ID, "Table", {
+      role: "action",
+      entries: tableCommands.flatMap((command): MenuEntry[] => [
+        ...(command.separatorBefore ? [{ kind: "separator" } as const] : []),
+        menuItem(`${TABLE_COMMAND_PREFIX}${command.id}`, command.label, { variant: command.destructive ? "destructive" : "default" }),
+      ]),
+    }));
   }
   if (hasUrl) {
     entries.push(

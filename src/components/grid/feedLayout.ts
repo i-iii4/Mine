@@ -27,6 +27,8 @@ export interface ColumnMemory {
   /** The cards in the order they were laid out, and where each stood. */
   blocks: readonly LightBlock[];
   layout: MasonryLayout;
+  /** The word widths the layout's heights were computed with. */
+  wordWidths: ReadonlyMap<number, WordWidths>;
   /** Every height was exact. Columns of a layout made on the worst-case
    *  text heights that stand in while fonts load are not kept: the first
    *  exact layout balances the columns anew. */
@@ -213,18 +215,25 @@ export function layFeedOut({
   last: MasonryLayout | null;
 }): MasonryLayout {
   const columnWidth = getMasonryColumnWidth(parentWidth, FEED_COLUMN_MIN_WIDTH_PX, layoutGap);
+  // The remembered layout is of the same columns: the same width and gap
+  // (the presentation is the same wherever columns are remembered).
+  const sameColumns = columns !== null
+    && columns.memory.parentWidth === parentWidth
+    && columns.memory.layoutGap === layoutGap;
+  // With the same word widths too, a card that is the same row at the same
+  // place has the height it has in that layout: nothing is asked of it.
+  const held = sameColumns && columns.memory.wordWidths === wordWidths ? columns.memory : null;
+  const heldCount = held === null ? 0 : Math.min(held.blocks.length, held.layout.positions.length);
   const heights = new Array<number>(blocks.length);
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index]!;
-    heights[index] = computeCardHeight(block, columnWidth, wordWidths.get(block.id) ?? null, show);
+    heights[index] = held !== null && index < heldCount && held.blocks[index] === block
+      ? held.layout.positions[index]!.height
+      : computeCardHeight(block, columnWidth, wordWidths.get(block.id) ?? null, show);
   }
 
   let continued: MasonryContinuation | undefined = last === null ? undefined : { layout: last, keep: 0 };
-  if (
-    columns !== null
-    && columns.memory.parentWidth === parentWidth
-    && columns.memory.layoutGap === layoutGap
-  ) {
+  if (columns !== null && sameColumns) {
     const remembered = columns.memory.layout;
     const limit = Math.min(columns.aligned, remembered.positions.length);
     let keep = 0;

@@ -78,6 +78,9 @@ export default defineConfig(async () => ({
         // TRIAL: the card menu's own window (DESIGN_SYSTEM.md, «Меню
         // карточки в отдельном окне: проба»).
         menuPanel: path.resolve(__dirname, "menu-panel.html"),
+        // The outside window: what does not fit in an app window
+        // (SPEC_OUTSIDE_WINDOW.md, НО1).
+        outsideWindow: path.resolve(__dirname, "outside-window.html"),
       },
     },
   },

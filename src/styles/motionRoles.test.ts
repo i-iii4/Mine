@@ -59,7 +59,7 @@ const CODE_EXCEPTIONS: ReadonlyArray<{ file: RegExp; reason: string }> = [
   { file: /^src\/lib\/motion\.ts$/, reason: "the tokens' values for code (НС6)" },
   { file: /^src\/components\/graph\//, reason: "the graph keeps its motion on every level (УД9)" },
   { file: /^src\/components\/GraphView\.tsx$/, reason: "the graph keeps its motion on every level (УД9)" },
-  { file: /^src\/lib\/(cardPeek|channelIcon)\.ts$/, reason: "the springs and their shares (РД4)" },
+  { file: /^src\/lib\/(cardPeek|spring)\.ts$/, reason: "the springs and their shares (РД4)" },
 ];
 
 function exempt(file: string): boolean {

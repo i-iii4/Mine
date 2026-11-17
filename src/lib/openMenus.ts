@@ -241,10 +241,10 @@ export function pointerIsOnMenu(): boolean {
  * after it closed, and says so with `pointerover` alone (SPEC_CARD_STATES.md,
  * С7.8). A closing surface still takes the pointer's events, which say nothing.
  */
-export function onPointerOffMenus(report: () => void): () => void {
+export function onPointerOffMenus(report: (event: Event) => void): () => void {
   const handle = (event: Event) => {
     if (event.target instanceof Element && event.target.closest(MENU_POPPER)) return;
-    report();
+    report(event);
   };
   window.addEventListener("pointerover", handle, true);
   window.addEventListener("pointermove", handle, true);
@@ -302,13 +302,24 @@ export function holdMenuElsewhere(dismiss: () => void): () => void {
   };
 }
 
+/**
+ * Keeps the guard listening for the owner of a menu whose surface is there
+ * only while the menu is open (a menu at a point, `SpecPointMenu`): the
+ * press that closes such a menu takes its surface away at once, and the
+ * guard must still hold the rest of that press, so the press only closes
+ * the menu and acts on nothing under it.
+ */
+export function useMenuGuard(): void {
+  useEffect(() => holdGuard(), []);
+}
+
 interface MenuSurfaceHandlers {
   onPointerDownOutside?: (event: PointerDownOutsideEvent) => void;
   onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
- * Wires one root menu surface (`DropdownMenuContent`, `ContextMenuContent`)
+ * Wires one root menu surface (`DropdownMenuContent`)
  * into the guard: its ref, merged with the caller's, and the two handlers,
  * composed with the caller's. After the press that closed the menu the focus
  * goes where the modal menu sent it: a dropdown's to its trigger after a

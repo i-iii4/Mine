@@ -53,7 +53,7 @@ describe("what a collection's window holds", () => {
     expect(collectionPreviewContent({ ...base, count: 20, cards: cards(4), previewsPending: true })).toMatchObject({ placeholders: 5 });
   });
 
-  it("writes the count as a compact row does", () => {
+  it("writes the count with the product's word for a card", () => {
     expect(collectionCountLabel(1)).toBe("1 element");
     expect(collectionCountLabel(12)).toBe("12 elements");
   });

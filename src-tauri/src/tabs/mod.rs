@@ -2245,9 +2245,9 @@ mod tests {
                     view: TabView::default(),
                 })
                 .collect();
-            model.insert_tabs(&WindowId("w".into()), 1, tabs, 0);
+            model.insert_tabs(&WindowId("w".into()), 1, tabs, None);
         });
         assert_eq!(written_order(&written), vec!["a", "grabbed", "n2", "b", "c"]);
-        assert_eq!(written.windows[0].active_tab, TabId("grabbed".into()));
+        assert_eq!(written.windows[0].active_tab, TabId("a".into()));
     }
 }

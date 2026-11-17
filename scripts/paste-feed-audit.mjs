@@ -60,6 +60,9 @@ function tauriMock() {
     end_note_edit: null,
     list_card_associations: (args) => ({ generation: 1, slug: args?.slug, groups: [] }),
     read_clipboard_payload: { kind: "text", text: "Pasted text" },
+    // A command that changes a space answers with its value and the cards it
+    // changed (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+    create_block: () => ({ value: blocks[0], cards: [] }),
   };
   window.__clipboardReads = 0;
   let callback = 1;

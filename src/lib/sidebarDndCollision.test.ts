@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sidebarDropIdFromPoint, sidebarPointerWithin } from "./sidebarDndCollision";
+import { SIDEBAR_SEARCH_DROP_ID, sidebarDropIdFromPoint, sidebarPointerWithin } from "./sidebarDndCollision";
 
 function rect(top: number, height: number) {
   return { top, left: 0, right: 200, bottom: top + height, width: 200, height };
@@ -94,6 +94,19 @@ describe("sidebar dnd collision", () => {
     mockElementsFromPoint([overlay, beta]);
 
     expect(sidebarDropIdFromPoint({ x: 12, y: 34 })).toBe("tag:beta");
+  });
+
+  it("finds the sidebar's filter, the one drop that founds a collection, and no creation row (decision of 16.11.2026)", () => {
+    const surface = document.createElement("div");
+    surface.setAttribute("data-sidebar-search-drop", "");
+    const field = document.createElement("input");
+    surface.append(field);
+    document.body.append(surface);
+    mockElementsFromPoint([field]);
+    expect(sidebarDropIdFromPoint({ x: 12, y: 34 })).toBe(SIDEBAR_SEARCH_DROP_ID);
+
+    mockElementsFromPoint([row("create-channel")]);
+    expect(sidebarDropIdFromPoint({ x: 12, y: 34 })).toBeNull();
   });
 
   it("ignores Everything because it is navigation, not a card drop target", () => {

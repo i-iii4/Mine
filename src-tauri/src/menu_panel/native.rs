@@ -3,6 +3,13 @@
 //! an open menu, and the check that the window really is clear before anyone
 //! sees it.
 //!
+//! The panel's window is made here, of its own class from its making, and
+//! the page Tauri made is moved into it; the Tauri window stays a hidden
+//! shell (МО62). The class of a living window is never changed (МО62а):
+//! AppKit and WebKit watch every window by KVO from its `init`, and a window
+//! whose class changes under them crashes in the next watched setter or
+//! throws when the watch is taken off.
+//!
 //! What is not public API here, and what each is for (МО62 to МО65):
 //! `_setWindowOcclusionDetectionEnabled:` of WKWebView, so WebKit does not
 //! count the clear panel's page as hidden, and the key `drawsBackground` of
@@ -11,6 +18,8 @@
 //! opens on its page once the paint deadline passes; without the second the
 //! check of clearness fails and the panel is never shown. The panel's own
 //! window class is made with the Objective-C runtime's public functions.
+//!
+//! Everything here but the pure functions runs on the main thread.
 
 use tauri::{Webview, WebviewWindow, Window};
 
@@ -138,7 +147,7 @@ impl PressGuard {
 }
 
 /// What AppKit says of the panel right after it was shown (МО59).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShowReport {
     pub visible: bool,
     pub on_active_space: bool,
@@ -149,18 +158,31 @@ pub struct ShowReport {
     pub unoccluded: bool,
     /// The panel's frame changed its size for this menu (МО29, МО73).
     pub frame_changed: bool,
+    /// The panel's frame set for this menu.
+    pub frame: MenuPanelSize,
+    /// The size of the page's view in the panel's window after the frame
+    /// was set; none when the window holds no page.
+    pub page: Option<MenuPanelSize>,
 }
 
 impl ShowReport {
-    /// The menu is seen and holds the keyboard.
+    /// The menu is seen, holds the keyboard, and its page can draw it: the
+    /// page draws once its area is the frame's (МО30, МО30а).
     pub fn on_top(self) -> bool {
-        self.visible && self.on_active_space && self.key
+        self.visible && self.on_active_space && self.key && self.page_fits()
+    }
+
+    /// The page's view took the panel's frame.
+    pub fn page_fits(self) -> bool {
+        self.page
+            .is_some_and(|page| (page.width - self.frame.width).abs() < 0.5 && (page.height - self.frame.height).abs() < 0.5)
     }
 
     pub fn describe(self) -> String {
+        let page = self.page.map_or_else(|| "none".to_string(), |page| format!("{}x{}", page.width, page.height));
         format!(
-            "visible={} on_active_space={} key={} unoccluded={} frame_changed={}",
-            self.visible, self.on_active_space, self.key, self.unoccluded, self.frame_changed
+            "visible={} on_active_space={} key={} unoccluded={} frame_changed={} frame={}x{} page_view={page}",
+            self.visible, self.on_active_space, self.key, self.unoccluded, self.frame_changed, self.frame.width, self.frame.height,
         )
     }
 }
@@ -207,6 +229,19 @@ pub struct Transparency {
 }
 
 impl Transparency {
+    /// Nothing was checked: no window or no page to look at. Not clear.
+    pub fn unknown() -> Self {
+        Transparency {
+            window_opaque: true,
+            window_background_alpha: 1.0,
+            window_shadow: true,
+            page_draws_background: true,
+            snapshot: None,
+            highest_alpha: 1.0,
+            sampled: 0,
+        }
+    }
+
     /// The window is clear: every flag says so and every sampled pixel of
     /// the page at rest is clear.
     pub fn clear(&self) -> bool {
@@ -235,11 +270,12 @@ impl Transparency {
 mod imp {
     use std::cell::{Cell, RefCell};
     use std::ffi::CStr;
+    use std::panic::AssertUnwindSafe;
     use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use objc2::rc::Retained;
+    use objc2::rc::{Allocated, Retained};
     use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
     use objc2::{msg_send, sel, MainThreadMarker};
     use objc2_foundation::{NSEdgeInsets, NSNumber, NSPoint, NSRect, NSString};
@@ -264,11 +300,18 @@ mod imp {
     const STYLE_FULL_SCREEN: usize = 1 << 14;
     /// `NSWindowOcclusionStateVisible`.
     const OCCLUSION_VISIBLE: usize = 1 << 1;
-    /// The panel's own window class, a subclass of the class tao made its
-    /// window of.
+    /// `NSWindowStyleMaskBorderless`.
+    const STYLE_BORDERLESS: usize = 0;
+    /// `NSBackingStoreBuffered`.
+    const BACKING_BUFFERED: usize = 2;
+    /// `NSViewWidthSizable | NSViewHeightSizable`: a view that keeps the
+    /// size of its parent.
+    const FILLS_ITS_PARENT: usize = (1 << 1) | (1 << 4);
+    /// The class of the panel's own window, an `NSWindow`.
     const PANEL_CLASS: &CStr = c"MineMenuPanelWindow";
 
-    /// The panel's NSWindow, or 0 when there is none.
+    /// The panel's own NSWindow, retained by this place from `adopt` to
+    /// `forget_panel`, or 0 when there is none.
     static PANEL: AtomicUsize = AtomicUsize::new(0);
     /// A menu is up in the panel: the panel may hold the keyboard, and a
     /// press outside it closes the menu.
@@ -282,6 +325,7 @@ mod imp {
         static NSApplicationDidBecomeActiveNotification: &'static NSString;
         static NSApplicationDidChangeScreenParametersNotification: &'static NSString;
         static NSMenuDidBeginTrackingNotification: &'static NSString;
+        static NSWindowDidResignKeyNotification: &'static NSString;
         static NSWorkspaceActiveSpaceDidChangeNotification: &'static NSString;
     }
 
@@ -297,14 +341,15 @@ mod imp {
         Bool::new(MENU_UP.load(Ordering::Relaxed))
     }
 
-    /// The panel's own class, a subclass of `of` that answers the two
-    /// questions above: made once with the runtime's public functions, so
-    /// no other window's class is touched (МО62).
-    fn panel_class(of: &AnyClass) -> Option<&'static AnyClass> {
+    /// The class of the panel's window, an `NSWindow` that answers the two
+    /// questions above: made once with the runtime's public functions. The
+    /// panel's window is of this class from its making; no window's class
+    /// is changed (МО62, МО62а).
+    fn panel_class() -> Option<&'static AnyClass> {
         if let Some(known) = AnyClass::get(PANEL_CLASS) {
-            return (known.superclass().map(std::ptr::from_ref) == Some(std::ptr::from_ref(of))).then_some(known);
+            return Some(known);
         }
-        let mut builder = ClassBuilder::new(PANEL_CLASS, of)?;
+        let mut builder = ClassBuilder::new(PANEL_CLASS, objc2::class!(NSWindow))?;
         // SAFETY: both methods have the signature of the NSWindow methods
         // they override, `- (BOOL)canBecomeMainWindow` and
         // `- (BOOL)canBecomeKeyWindow`.
@@ -313,6 +358,47 @@ mod imp {
             builder.add_method(sel!(canBecomeKeyWindow), key_while_a_menu_is_up as extern "C-unwind" fn(_, _) -> _);
         }
         Some(builder.register())
+    }
+
+    /// Run `run`, a part of AppKit's work on the panel's window: what
+    /// Objective-C throws in it comes back as an error and goes no further.
+    /// The panel is then not set up and the menus stay on the page (МО62).
+    fn guarded<R>(what: &str, run: impl FnOnce() -> Result<R, String>) -> Result<R, String> {
+        // `AssertUnwindSafe`: after a throw the caller lets the window go
+        // and reads nothing the closure left half done.
+        match objc2::exception::catch(AssertUnwindSafe(run)) {
+            Ok(done) => done,
+            Err(Some(thrown)) => Err(format!("{what}: AppKit threw {thrown}")),
+            Err(None) => Err(format!("{what}: AppKit threw an exception with no object")),
+        }
+    }
+
+    /// The page's view in the panel's window: the WKWebView among the
+    /// views of its content view, as wry laid it out.
+    fn page_in_panel(window: &AnyObject) -> Option<&AnyObject> {
+        let web_view = AnyClass::get(c"WKWebView")?;
+        // SAFETY: the panel's live window and its views on the main thread.
+        unsafe {
+            let content: *mut AnyObject = msg_send![window, contentView];
+            let content = content.as_ref()?;
+            let subviews: *mut AnyObject = msg_send![content, subviews];
+            let subviews = subviews.as_ref()?;
+            let count: usize = msg_send![subviews, count];
+            (0..count).find_map(|index| {
+                let view: *mut AnyObject = msg_send![subviews, objectAtIndex: index];
+                let view = view.as_ref()?;
+                let is_page: bool = msg_send![view, isKindOfClass: web_view];
+                is_page.then_some(view)
+            })
+        }
+    }
+
+    /// The panel's own window, or none.
+    fn panel_window() -> Option<&'static AnyObject> {
+        // SAFETY: the window `adopt` retained and stored; it lives until
+        // `forget_panel` takes it back, and both run on the main thread, as
+        // every reader of this does.
+        unsafe { (PANEL.load(Ordering::Relaxed) as *const AnyObject).as_ref() }
     }
 
     pub fn on_main_thread() -> bool {
@@ -326,7 +412,8 @@ mod imp {
         unsafe { (ptr as *const AnyObject).as_ref() }
     }
 
-    fn panel_ns_window(panel: &WebviewWindow) -> Option<&'static AnyObject> {
+    /// The NSWindow of the Tauri window the panel's page was made in.
+    fn shell_ns_window(panel: &WebviewWindow) -> Option<&'static AnyObject> {
         let ptr = panel.ns_window().ok()?;
         // SAFETY: as in `ns_window_of`.
         unsafe { (ptr as *const AnyObject).as_ref() }
@@ -441,22 +528,65 @@ mod imp {
         }
     }
 
-    /// Make the panel clear, unseen and passing clicks, on every space,
-    /// never main, key only while a menu is up. It stays unseen
-    /// (`alphaValue` 0) until the check below finds it clear.
-    pub fn configure(panel: &WebviewWindow) -> Result<(), String> {
-        let window = panel_ns_window(panel).ok_or("no NSWindow")?;
-        let class = panel_class(window.class()).ok_or("the panel's window class could not be made")?;
-        // SAFETY: the panel's live NSWindow on the main thread. The class is
-        // a subclass of the window's own with no instance variables and two
-        // overrides of the signatures they replace; the returned class is
-        // checked to be the one the window had.
-        unsafe {
-            let was = AnyObject::set_class(window, class);
-            if class.superclass().map(std::ptr::from_ref) != Some(std::ptr::from_ref(was)) {
-                AnyObject::set_class(window, was);
-                return Err("the panel's window changed its class meanwhile".to_string());
+    /// Make the panel's own window where `shell` stands and move `shell`'s
+    /// page, the web view `view`, into it (МО62). The window is clear,
+    /// unseen (`alphaValue` 0) and passes clicks, on every space, never
+    /// main, key only while a menu is up; it is not put on the screen here.
+    /// A panel made before goes first, and a panel that could not be made
+    /// whole is not left behind: whatever fails, an exception of AppKit
+    /// among it, comes back as the error.
+    pub fn adopt(shell: &AnyObject, view: &AnyObject) -> Result<(), String> {
+        if !on_main_thread() {
+            return Err("a window is made on the main thread only".to_string());
+        }
+        forget_panel();
+        let made = guarded("making the panel's window", || make_and_fill(shell, view));
+        if made.is_err() {
+            forget_panel();
+        }
+        made
+    }
+
+    /// The panel's window, made and filled; a failure leaves what was made
+    /// to `forget_panel`.
+    fn make_and_fill(shell: &AnyObject, view: &AnyObject) -> Result<(), String> {
+        let class = panel_class().ok_or("the panel's window class could not be made")?;
+        // SAFETY: live AppKit objects on the main thread. The window is made
+        // by the designated initializer of NSWindow, the class's parent;
+        // the class adds no instance variables.
+        let content = unsafe {
+            let content: Option<Retained<AnyObject>> = msg_send![shell, contentView];
+            let content = content.ok_or("the shell has no content view")?;
+            let inside: bool = msg_send![view, isDescendantOf: &*content];
+            if !inside {
+                return Err("the page is not in the shell's content view".to_string());
             }
+            let frame: NSRect = msg_send![shell, frame];
+            let made: Allocated<AnyObject> = msg_send![class, alloc];
+            let window: Option<Retained<AnyObject>> = msg_send![
+                made,
+                initWithContentRect: frame,
+                styleMask: STYLE_BORDERLESS,
+                backing: BACKING_BUFFERED,
+                defer: false
+            ];
+            let window = window.ok_or("AppKit made no window")?;
+            // This place owns the window: closing it must not release it.
+            let _: () = msg_send![&*window, setReleasedWhenClosed: false];
+            MENU_UP.store(false, Ordering::Relaxed);
+            PANEL.store(Retained::into_raw(window) as usize, Ordering::Relaxed);
+            content
+        };
+        let window = panel_window().ok_or("the panel's window is gone")?;
+        dress_and_fill(window, shell, &content, view)
+    }
+
+    /// The panel's new window `window` gets its look and its rules, then
+    /// `content`, the view of `shell` that holds the page `view`.
+    fn dress_and_fill(window: &AnyObject, shell: &AnyObject, content: &AnyObject, view: &AnyObject) -> Result<(), String> {
+        // SAFETY: the panel's live window, the shell and the page's views on
+        // the main thread.
+        unsafe {
             let main: bool = msg_send![window, canBecomeMainWindow];
             let key: bool = msg_send![window, canBecomeKeyWindow];
             if main || key {
@@ -476,16 +606,56 @@ mod imp {
             let _: () = msg_send![window, setHidesOnDeactivate: false];
             let _: () = msg_send![window, setAnimationBehavior: ANIMATION_NONE];
             let _: () = msg_send![window, setIgnoresMouseEvents: true];
+            // As tao sets on every window it makes, the shell among them:
+            // the page hears the pointer's moves as it did there.
+            let _: () = msg_send![window, setAcceptsMouseMovedEvents: true];
+            // The page's view moves with the content view it is in: the
+            // shell gets an empty view in its place.
+            let empty: Retained<AnyObject> = msg_send![objc2::class!(NSView), new];
+            let _: () = msg_send![shell, setContentView: &*empty];
+            let _: () = msg_send![window, setContentView: content];
+            let now_in: *mut AnyObject = msg_send![view, window];
+            if !std::ptr::eq(now_in, window) {
+                return Err("the page did not move into the panel's window".to_string());
+            }
+            // The page's view fills the panel and keeps its size from now
+            // on (МО30а). Tauri makes every window's page a child view of a
+            // fixed size (its `unstable` feature) and sizes it itself when
+            // its window resizes; the panel's window is not Tauri's, so no
+            // such word comes, and a page left as it was keeps the shell's
+            // size whatever frame the panel takes.
+            let bounds: NSRect = msg_send![content, bounds];
+            let _: () = msg_send![view, setFrame: bounds];
+            let _: () = msg_send![view, setAutoresizingMask: FILLS_ITS_PARENT];
+            let frame: NSRect = msg_send![view, frame];
+            if frame != bounds {
+                return Err("the page does not fill the panel's window".to_string());
+            }
+            // The page takes the keys of its window, as wry set it in the
+            // shell.
+            let takes_keys: bool = msg_send![window, makeFirstResponder: view];
+            if !takes_keys {
+                return Err("the page does not take the keys of the panel's window".to_string());
+            }
         }
-        MENU_UP.store(false, Ordering::Relaxed);
-        PANEL.store(std::ptr::from_ref(window) as usize, Ordering::Relaxed);
-        let view = web_view_of_panel(panel).ok_or("no WKWebView to make clear")?;
-        // SAFETY: the panel's live WKWebView on the main thread.
-        // `drawsBackground` is the key wry sets for clear pages (МО65);
-        // `_setWindowOcclusionDetectionEnabled:` (WKWebViewPrivate.h) keeps
-        // WebKit from counting the clear panel as hidden (МО64), and is sent
-        // only to a view that answers it.
-        unsafe {
+        Ok(())
+    }
+
+    /// Make the panel of the Tauri window `panel`, its shell: the panel's
+    /// own window with the shell's page in it, on the screen and unseen
+    /// until the check below finds it clear.
+    pub fn configure(panel: &WebviewWindow) -> Result<(), String> {
+        let shell = shell_ns_window(panel).ok_or("no NSWindow")?;
+        let view = web_view_of_panel(panel).ok_or("no WKWebView to move and make clear")?;
+        adopt(shell, view)?;
+        let window = panel_window().ok_or("the panel's window is gone")?;
+        // SAFETY: the panel's live window and WKWebView on the main thread.
+        // At rest the panel stays on the screen, unseen, so WebKit keeps
+        // its page running. `drawsBackground` is the key wry sets for clear
+        // pages (МО65); `_setWindowOcclusionDetectionEnabled:`
+        // (WKWebViewPrivate.h) keeps WebKit from counting the clear panel
+        // as hidden (МО64), and is sent only to a view that answers it.
+        let shown = guarded("putting the panel's window at rest", || unsafe {
             let no = NSNumber::new_bool(false);
             let key = NSString::from_str("drawsBackground");
             let _: () = msg_send![view, setValue: &*no, forKey: &*key];
@@ -497,8 +667,14 @@ mod imp {
                     "menu panel: WKWebView does not answer _setWindowOcclusionDetectionEnabled:, occlusion detection is left on; a page WebKit counts as hidden draws nothing, and the menus then open on the page"
                 );
             }
+            let nothing: *mut AnyObject = std::ptr::null_mut();
+            let _: () = msg_send![window, orderFront: nothing];
+            Ok(())
+        });
+        if shown.is_err() {
+            forget_panel();
         }
-        Ok(())
+        shown
     }
 
     /// Hear `name` from `center` for the app's run.
@@ -515,12 +691,48 @@ mod imp {
         std::mem::forget(token);
     }
 
-    /// Watch the mouse and the app, once for the app's run (МО43, МО44).
-    /// `on_outside` runs on a press outside the panel while a menu is up,
-    /// when the app leaves, when the menu bar starts tracking, when the
-    /// desktop or the screens change. `on_active` runs when the app comes
-    /// back.
-    pub fn watch(on_outside: impl Fn() + 'static, on_active: impl Fn() + 'static) -> Result<(), String> {
+    /// Hear the panel's window lose the keyboard, for the app's run: `run`
+    /// goes on the main queue's next step, not inside AppKit's change of
+    /// the key window, and by then a later menu may hold the keyboard
+    /// (МО44). No Tauri event tells of it: the window is not Tauri's (МО62).
+    fn observe_key_lost(center: &AnyObject, run: Rc<dyn Fn()>) {
+        let block = block2::RcBlock::new(move |note: *mut AnyObject| {
+            // SAFETY: the notification AppKit posts on the main thread and
+            // the main operation queue.
+            unsafe {
+                let Some(note) = note.as_ref() else { return };
+                let of: *mut AnyObject = msg_send![note, object];
+                if of.is_null() || of as usize != PANEL.load(Ordering::Relaxed) {
+                    return;
+                }
+                let run = Rc::clone(&run);
+                let later = block2::RcBlock::new(move || run());
+                let queue: *mut AnyObject = msg_send![objc2::class!(NSOperationQueue), mainQueue];
+                if let Some(queue) = queue.as_ref() {
+                    let _: () = msg_send![queue, addOperationWithBlock: &*later];
+                }
+            }
+        });
+        let nothing: *mut AnyObject = std::ptr::null_mut();
+        // SAFETY: as in `observe`.
+        let token: Option<Retained<AnyObject>> = unsafe {
+            msg_send![center, addObserverForName: NSWindowDidResignKeyNotification, object: nothing, queue: nothing, usingBlock: &*block]
+        };
+        // The observer stands for the app's run.
+        std::mem::forget(token);
+    }
+
+    /// Watch the mouse, the app and the panel's window, once for the app's
+    /// run (МО43, МО44). `on_outside` runs on a press outside the panel
+    /// while a menu is up, when the app leaves, when the menu bar starts
+    /// tracking, when the desktop or the screens change. `on_active` runs
+    /// when the app comes back. `on_key_lost` runs after the panel's window
+    /// lost the keyboard.
+    pub fn watch(
+        on_outside: impl Fn() + 'static,
+        on_active: impl Fn() + 'static,
+        on_key_lost: impl Fn() + 'static,
+    ) -> Result<(), String> {
         if WATCHING.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -572,6 +784,7 @@ mod imp {
             observe(center, NSMenuDidBeginTrackingNotification, Rc::clone(&on_outside));
             observe(center, NSApplicationDidChangeScreenParametersNotification, Rc::clone(&on_outside));
             observe(center, NSApplicationDidBecomeActiveNotification, Rc::new(on_active));
+            observe_key_lost(center, Rc::new(on_key_lost));
             if let Some(workspace) = workspace.as_ref() {
                 let spaces: *mut AnyObject = msg_send![workspace, notificationCenter];
                 if let Some(spaces) = spaces.as_ref() {
@@ -584,8 +797,8 @@ mod imp {
     }
 
     /// The panel may be seen: the check found it clear.
-    pub fn reveal(panel: &WebviewWindow) {
-        if let Some(window) = panel_ns_window(panel) {
+    pub fn reveal() {
+        if let Some(window) = panel_window() {
             // SAFETY: the panel's live NSWindow on the main thread.
             unsafe {
                 let _: () = msg_send![window, setAlphaValue: 1.0_f64];
@@ -598,8 +811,17 @@ mod imp {
     /// (`takeSnapshotWithConfiguration:`): no system permission, no picture
     /// of the screen. `done` runs once, on the main thread.
     pub fn check_transparency(panel: &WebviewWindow, done: impl FnOnce(Transparency) + 'static) {
-        let window = panel_ns_window(panel);
-        let view = web_view_of_panel(panel);
+        check_clearness(panel_window(), web_view_of_panel(panel), done);
+    }
+
+    /// Whether `window` and its page `view` are clear, as `check_transparency`
+    /// asks of the panel: for any clear window of the app, the outside window
+    /// too (SPEC_OUTSIDE_WINDOW.md, НО1). A missing window or page is not.
+    pub fn check_clearness(
+        window: Option<&AnyObject>,
+        view: Option<&AnyObject>,
+        done: impl FnOnce(Transparency) + 'static,
+    ) {
         // SAFETY: live AppKit and WebKit objects read on the main thread.
         let flags = unsafe {
             let window_opaque = window.is_none_or(|w| msg_send![w, isOpaque]);
@@ -672,9 +894,9 @@ mod imp {
 
     /// The panel at rest: it passes every click and cannot take the
     /// keyboard.
-    pub fn rest(panel: &WebviewWindow) {
+    pub fn rest() {
         MENU_UP.store(false, Ordering::Relaxed);
-        if let Some(window) = panel_ns_window(panel) {
+        if let Some(window) = panel_window() {
             // SAFETY: the panel's live NSWindow on the main thread.
             unsafe {
                 let _: () = msg_send![window, setIgnoresMouseEvents: true];
@@ -682,18 +904,38 @@ mod imp {
         }
     }
 
-    /// The panel is gone: nothing is the panel, no menu is up.
+    /// The panel is gone: no menu is up, and its window, if one is left,
+    /// is closed and let go.
     pub fn forget_panel() {
         MENU_UP.store(false, Ordering::Relaxed);
-        PANEL.store(0, Ordering::Relaxed);
+        if PANEL.load(Ordering::Relaxed) == 0 {
+            return;
+        }
+        if !on_main_thread() {
+            log::warn!("menu panel: its window is closed on the main thread only, and stays");
+            return;
+        }
+        let window = PANEL.swap(0, Ordering::Relaxed) as *mut AnyObject;
+        // SAFETY: the pointer `adopt` stored of `Retained::into_raw`, taken
+        // back once, on the main thread; `close` takes a window off the
+        // screen, and one that was never on it is closed all the same.
+        let closed = guarded("closing the panel's window", || unsafe {
+            if let Some(window) = Retained::from_raw(window) {
+                let _: () = msg_send![&*window, close];
+            }
+            Ok(())
+        });
+        if let Err(why) = closed {
+            log::warn!("menu panel: {why}");
+        }
     }
 
     /// Put the panel at `origin` in the frame `size`, in front, with the
     /// clicks and the keyboard; what AppKit says of it then (МО59). The
     /// frame is set while the panel's page is empty (МО29). A panel that is
     /// not on top goes back to rest.
-    pub fn show(panel: &WebviewWindow, origin: ScreenPoint, size: MenuPanelSize) -> ShowReport {
-        let Some(window) = panel_ns_window(panel) else { return ShowReport::default() };
+    pub fn show(origin: ScreenPoint, size: MenuPanelSize) -> ShowReport {
+        let Some(window) = panel_window() else { return ShowReport::default() };
         let Some(primary) = primary_height() else { return ShowReport::default() };
         let frame = super::frame_in_appkit(origin, size, primary);
         MENU_UP.store(true, Ordering::Relaxed);
@@ -707,22 +949,28 @@ mod imp {
             let _: () = msg_send![window, orderFrontRegardless];
             let _: () = msg_send![window, makeKeyWindow];
             let occlusion: usize = msg_send![window, occlusionState];
+            let page = page_in_panel(window).map(|view| {
+                let bounds: NSRect = msg_send![view, bounds];
+                MenuPanelSize { width: bounds.size.width, height: bounds.size.height }
+            });
             ShowReport {
                 visible: msg_send![window, isVisible],
                 on_active_space: msg_send![window, isOnActiveSpace],
                 key: msg_send![window, isKeyWindow],
                 unoccluded: occlusion & OCCLUSION_VISIBLE != 0,
                 frame_changed,
+                frame: size,
+                page,
             }
         };
         if !report.on_top() {
-            rest(panel);
+            rest();
         }
         report
     }
 
-    pub fn give_up_key(panel: &WebviewWindow) {
-        if let Some(window) = panel_ns_window(panel) {
+    pub fn give_up_key() {
+        if let Some(window) = panel_window() {
             // SAFETY: the panel's live NSWindow on the main thread.
             unsafe {
                 let nothing: *mut AnyObject = std::ptr::null_mut();
@@ -732,8 +980,8 @@ mod imp {
         }
     }
 
-    pub fn is_key(panel: &WebviewWindow) -> bool {
-        panel_ns_window(panel).is_some_and(|window| {
+    pub fn is_key() -> bool {
+        panel_window().is_some_and(|window| {
             // SAFETY: a live NSWindow on the main thread.
             unsafe { msg_send![window, isKeyWindow] }
         })
@@ -769,14 +1017,14 @@ mod imp {
         }
     }
 
-    pub fn look(window: &Window, panel: &WebviewWindow) -> WindowLook {
+    pub fn look(window: &Window) -> WindowLook {
         let ns_window = ns_window_of(window);
         // SAFETY: live NSWindows on the main thread, public properties only
         // (МО63).
         unsafe {
             let main = ns_window.is_some_and(|w| msg_send![w, isMainWindow]);
             let key = ns_window.is_some_and(|w| msg_send![w, isKeyWindow]);
-            WindowLook { main, key, panel_key: is_key(panel), app_active: app_is_active() }
+            WindowLook { main, key, panel_key: is_key(), app_active: app_is_active() }
         }
     }
 }
@@ -796,28 +1044,24 @@ mod imp {
     pub fn configure(_panel: &WebviewWindow) -> Result<(), String> {
         Err("the menu panel is a macOS window".to_string())
     }
-    pub fn watch(_on_outside: impl Fn() + 'static, _on_active: impl Fn() + 'static) -> Result<(), String> {
+    pub fn watch(
+        _on_outside: impl Fn() + 'static,
+        _on_active: impl Fn() + 'static,
+        _on_key_lost: impl Fn() + 'static,
+    ) -> Result<(), String> {
         Err("the menu panel is a macOS window".to_string())
     }
-    pub fn reveal(_panel: &WebviewWindow) {}
+    pub fn reveal() {}
     pub fn check_transparency(_panel: &WebviewWindow, done: impl FnOnce(Transparency) + 'static) {
-        done(Transparency {
-            window_opaque: true,
-            window_background_alpha: 1.0,
-            window_shadow: true,
-            page_draws_background: true,
-            snapshot: None,
-            highest_alpha: 1.0,
-            sampled: 0,
-        });
+        done(Transparency::unknown());
     }
-    pub fn rest(_panel: &WebviewWindow) {}
+    pub fn rest() {}
     pub fn forget_panel() {}
-    pub fn show(_panel: &WebviewWindow, _origin: ScreenPoint, _size: MenuPanelSize) -> ShowReport {
+    pub fn show(_origin: ScreenPoint, _size: MenuPanelSize) -> ShowReport {
         ShowReport::default()
     }
-    pub fn give_up_key(_panel: &WebviewWindow) {}
-    pub fn is_key(_panel: &WebviewWindow) -> bool {
+    pub fn give_up_key() {}
+    pub fn is_key() -> bool {
         false
     }
     pub fn make_key(_window: &Window) -> bool {
@@ -829,7 +1073,7 @@ mod imp {
     pub fn keyboard_is_unheld() -> bool {
         false
     }
-    pub fn look(_window: &Window, _panel: &WebviewWindow) -> WindowLook {
+    pub fn look(_window: &Window) -> WindowLook {
         WindowLook { main: false, key: false, panel_key: false, app_active: false }
     }
 }
@@ -843,29 +1087,57 @@ pub fn anchor_on_screen(webview: &Webview, page: ScreenRect) -> Option<Placed> {
 pub fn configure(panel: &WebviewWindow) -> Result<(), String> {
     imp::configure(panel)
 }
-pub fn watch(on_outside: impl Fn() + 'static, on_active: impl Fn() + 'static) -> Result<(), String> {
-    imp::watch(on_outside, on_active)
+/// What `configure` does with no Tauri around it: make the panel's own
+/// window where the NSWindow `shell` stands and move `shell`'s page, the
+/// view `view`, into it (МО62). The window is not put on the screen.
+/// `tests/menu_panel_window.rs` runs this on real AppKit objects.
+///
+/// # Errors
+///
+/// Why the panel's window could not be made whole; nothing of it is left
+/// then.
+#[cfg(target_os = "macos")]
+pub fn adopt(shell: &objc2::runtime::AnyObject, view: &objc2::runtime::AnyObject) -> Result<(), String> {
+    imp::adopt(shell, view)
 }
-pub fn reveal(panel: &WebviewWindow) {
-    imp::reveal(panel);
+pub fn watch(
+    on_outside: impl Fn() + 'static,
+    on_active: impl Fn() + 'static,
+    on_key_lost: impl Fn() + 'static,
+) -> Result<(), String> {
+    imp::watch(on_outside, on_active, on_key_lost)
+}
+pub fn reveal() {
+    imp::reveal();
 }
 pub fn check_transparency(panel: &WebviewWindow, done: impl FnOnce(Transparency) + 'static) {
     imp::check_transparency(panel, done);
 }
-pub fn rest(panel: &WebviewWindow) {
-    imp::rest(panel);
+/// Whether the NSWindow `window` and its WKWebView `view` are clear: the
+/// panel's check for another clear window of the app (SPEC_OUTSIDE_WINDOW.md,
+/// НО1). `done` runs once, on the main thread.
+#[cfg(target_os = "macos")]
+pub fn check_clearness(
+    window: &objc2::runtime::AnyObject,
+    view: &objc2::runtime::AnyObject,
+    done: impl FnOnce(Transparency) + 'static,
+) {
+    imp::check_clearness(Some(window), Some(view), done);
+}
+pub fn rest() {
+    imp::rest();
 }
 pub fn forget_panel() {
     imp::forget_panel();
 }
-pub fn show(panel: &WebviewWindow, origin: ScreenPoint, size: MenuPanelSize) -> ShowReport {
-    imp::show(panel, origin, size)
+pub fn show(origin: ScreenPoint, size: MenuPanelSize) -> ShowReport {
+    imp::show(origin, size)
 }
-pub fn give_up_key(panel: &WebviewWindow) {
-    imp::give_up_key(panel);
+pub fn give_up_key() {
+    imp::give_up_key();
 }
-pub fn is_key(panel: &WebviewWindow) -> bool {
-    imp::is_key(panel)
+pub fn is_key() -> bool {
+    imp::is_key()
 }
 pub fn make_key(window: &Window) -> bool {
     imp::make_key(window)
@@ -876,8 +1148,8 @@ pub fn app_is_active() -> bool {
 pub fn keyboard_is_unheld() -> bool {
     imp::keyboard_is_unheld()
 }
-pub fn look(window: &Window, panel: &WebviewWindow) -> WindowLook {
-    imp::look(window, panel)
+pub fn look(window: &Window) -> WindowLook {
+    imp::look(window)
 }
 
 #[cfg(test)]
@@ -990,14 +1262,49 @@ mod tests {
         assert_eq!(mouse_step(26), Some(MouseStep::Up(MouseButton::Other)));
     }
 
+    /// МО62а: the class of a window is set at its making only. AppKit and
+    /// WebKit watch every window by KVO from its `init`; a window whose
+    /// class changed under them crashed the app at its start (15.11.2026).
+    #[test]
+    fn no_living_window_changes_its_class() {
+        let source = include_str!("native.rs");
+        // The names are put together here, so this test is not what it
+        // looks for.
+        for forbidden in [["object_set", "Class"].concat(), ["set_", "class("].concat()] {
+            assert!(!source.contains(&forbidden), "native.rs changes the class of a living object: {forbidden}");
+        }
+    }
+
     #[test]
     fn a_menu_is_on_top_when_it_is_seen_on_the_active_desktop_with_the_keyboard() {
-        let shown = ShowReport { visible: true, on_active_space: true, key: true, unoccluded: false, frame_changed: true };
+        let frame = MenuPanelSize { width: 564.0, height: 332.0 };
+        let shown = ShowReport {
+            visible: true,
+            on_active_space: true,
+            key: true,
+            unoccluded: false,
+            frame_changed: true,
+            frame,
+            page: Some(frame),
+        };
         // The occlusion state lags a move: it refuses nothing.
         assert!(shown.on_top());
         assert!(!ShowReport { visible: false, ..shown }.on_top());
         assert!(!ShowReport { on_active_space: false, ..shown }.on_top());
         assert!(!ShowReport { key: false, ..shown }.on_top());
         assert!(!ShowReport::default().on_top());
+    }
+
+    /// МО30а: a page that kept another size than the panel's frame would
+    /// wait for its size forever and draw nothing (16.11.2026): the menu
+    /// opens on the page at once, and the log names both sizes.
+    #[test]
+    fn a_page_that_did_not_take_the_frame_refuses_the_menu() {
+        let frame = MenuPanelSize { width: 564.0, height: 332.0 };
+        let shown = ShowReport { visible: true, on_active_space: true, key: true, unoccluded: true, frame_changed: true, frame, page: Some(frame) };
+        let stuck = ShowReport { page: Some(MenuPanelSize { width: 264.0, height: 56.0 }), ..shown };
+        assert!(!stuck.on_top());
+        assert!(stuck.describe().ends_with("frame=564x332 page_view=264x56"), "{}", stuck.describe());
+        assert!(!ShowReport { page: None, ..shown }.on_top());
     }
 }

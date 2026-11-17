@@ -1,25 +1,12 @@
-// Cards dragged from a tab's page onto its window's tab bar open in tabs of
-// their own (SPEC_TABS.md, В86). Pure: the page feeds pointer positions and
-// the dragged cards, these decide whether the pointer is over the bar and
-// which tabs to ask for.
+// Cards dragged from a tab's page onto a tab bar open in tabs of their own
+// (SPEC_TABS.md, В86): which tabs to ask for, and whether to ask first. Which
+// bar is under the pointer the backend finds (SPEC_OUTSIDE_WINDOW.md, ПК4).
 
-import { CONFIRM_CARD_TABS_FROM, TAB_BAR_HEIGHT_PX } from "@/tabbar/constants";
-
-/** Where the pointer at page position (`clientX`, `clientY`) is over the
- *  window's tab bar, as an `x` from the bar's left edge; `null` off the bar.
- *  The bar is the row above the page across the window's whole width, and
- *  the page's left edge is the bar's (В3): while the button holds a drag
- *  begun in the page, the page goes on hearing the pointer there, above its
- *  own top edge. */
-export function tabBarPointX(clientX: number, clientY: number, viewportWidth: number): number | null {
-  if (clientY >= 0 || clientY < -TAB_BAR_HEIGHT_PX) return null;
-  if (clientX < 0 || clientX > viewportWidth) return null;
-  return clientX;
-}
+import { CONFIRM_CARD_TABS_FROM } from "@/tabbar/constants";
 
 /** The dragged cards in the order their tabs take (В86, п. 5; decision of
  *  15.11.2026): the grabbed card first, on the placeholder's slot, its tab the
- *  one shown (`drop_cards_on_tab_bar` shows the first); the rest after it in the feed's order, and cards the feed does
+ *  one shown (the backend shows the first, `tabs::drag::land_cards`); the rest after it in the feed's order, and cards the feed does
  *  not hold after those, in their own order. */
 export function cardTabsOrder(
   slugs: readonly string[],

@@ -43,7 +43,7 @@ export function VaultPicker({ onVaultSelected, onBack }: VaultPickerProps) {
   };
 
   return (
-    <div className="grid h-screen w-screen place-items-center bg-background px-[var(--edge-rhythm,32px)]" data-vault-picker="">
+    <div className="grid h-screen w-screen place-items-center bg-background px-[var(--shell-rhythm)]" data-vault-picker="">
       <ScreenState
         description="Mine keeps your elements as files in a folder."
         actions={

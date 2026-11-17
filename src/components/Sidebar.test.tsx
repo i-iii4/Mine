@@ -227,38 +227,13 @@ describe("Sidebar", () => {
     expect(container.querySelector('[data-sidebar-row-key="create-channel"]')).toBeNull();
   });
 
-  it("renders the new-channel row at the top of the list, under Everything, while a card is dragged", () => {
+  it("never shows the creation row under a drag: a card dropped on the filter founds a collection (decision of 16.11.2026)", () => {
     const { container } = renderSidebar({ ...defaultProps, isDropDragging: true });
-
-    const button = screen.getByRole("button", { name: "New Collection" });
-    const row = button.closest("[data-sidebar-new-channel-row]") as HTMLElement;
-    expect(row).toHaveAttribute("data-sidebar-new-channel-row", "");
-    expect(row).toHaveAttribute("data-sidebar-row", "");
-    expect(row).toHaveAttribute("data-sidebar-row-key", "create-channel");
-    expect(row.closest("[data-sidebar-rows]")).not.toBeNull();
-    // The list parts for it (global.css, data-sidebar-row-part).
-    expect(row.closest("[data-sidebar-row-part]")).not.toBeNull();
+    expect(container.querySelector("[data-sidebar-new-channel-row]")).toBeNull();
+    expect(container.querySelector('[data-sidebar-row-key="create-channel"]')).toBeNull();
     const keys = Array.from(container.querySelectorAll("[data-sidebar-row-key]"))
       .map((node) => node.getAttribute("data-sidebar-row-key"));
-    expect(keys.slice(0, 3)).toEqual(["all", "create-channel", "tag:alpha"]);
-    expect(container.querySelector("[data-sidebar-rows]")).toBeInTheDocument();
-    // A row of the table with its own seam, one cell across the whole row
-    // (08.10.2026): the label runs to the plus, no column line crosses it,
-    // the plus where a count stands.
-    expect(row).toHaveAttribute("data-sidebar-row-surface");
-    const label = within(row).getByText("New Collection");
-    expect(label).toHaveAttribute("data-sidebar-row-text", "");
-    expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
-    expect(label).not.toHaveClass("w-[var(--sidebar-name-col)]");
-    expect(row.querySelector("[data-sidebar-preview-rail]")).toBeNull();
-    expect(row.querySelector("[data-sidebar-meta-cell]")).toBeNull();
-    // Lifted over the list's column lines on the table's surface, as the
-    // name being typed in this row is; its seam is its own `::after`.
-    expect(container.querySelector("[data-sidebar-guidelines]")).not.toBeNull();
-    expect(row).toHaveClass("z-10", "bg-sidebar");
-    expect(row).not.toHaveAttribute("data-sidebar-row-editing");
-    const plus = row.querySelector("[data-sidebar-create-channel-plus]");
-    expect(plus?.parentElement).toHaveClass("absolute", "right-[var(--sidebar-row-pad-x)]", "w-8");
+    expect(keys.slice(0, 2)).toEqual(["all", "tag:alpha"]);
   });
 
   it("starts the new name with the filter typed before the plus", () => {
@@ -659,18 +634,6 @@ describe("Sidebar", () => {
     });
   });
 
-  it("focuses the New Collection row when card content is dragged over it", () => {
-    dndContextState.over = { id: "create-channel" };
-    const { container } = renderSidebar({
-      ...defaultProps,
-      isDropDragging: true,
-    });
-
-    const createRow = container.querySelector("[data-sidebar-new-channel-row]") as HTMLElement;
-    expect(createRow).toHaveAttribute("data-sidebar-row-key", "create-channel");
-    expect(createRow).toHaveAttribute("data-sidebar-row-focused", "true");
-  });
-
   it("renders tag counts", () => {
     renderSidebar();
     // Alpha has count 10, Beta has count 5
@@ -784,15 +747,11 @@ describe("Sidebar", () => {
     const { container } = renderSidebar({ ...defaultProps, isDropDragging: true });
 
     const nav = container.querySelector("[data-sidebar-scroll]")!;
-    // A dragged card shows the create row at the top, between Everything and
-    // the first collection: it is the row above alpha now.
-    const createRow = container.querySelector('[data-sidebar-row-key="create-channel"]')!;
     const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
     const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
 
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
-    expect(createRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(alphaRow).not.toHaveClass("ring-2");
     expect(alphaRow).not.toHaveClass("ring-ring");
@@ -1144,6 +1103,54 @@ describe("Sidebar", () => {
     const reveal = await screen.findByRole("menuitem", { name: "Reveal in Finder" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("collection_page_path", { tag: "alpha" }));
     expect(reveal).toHaveAttribute("data-disabled");
+  });
+
+  /// SPEC_MENU_WINDOW.md, Г4: with the menu mode Window the row's menu opens
+  /// in the menu panel at the point of the right click, and its choices
+  /// come back to the row.
+  it("asks the menu panel for a row's menu at the point, follows the page once it is found, and carries out the panel's choices", async () => {
+    const { MENU_MODE_STORAGE_KEY } = await import("@/lib/menuMode");
+    const { MENU_PANEL_TO_SOURCE_EVENT } = await import("@/lib/menuPanelProtocol");
+    const { resetMenuPanelSourceForTests } = await import("@/lib/menuPanelSource");
+    const { collectionRowSpec } = await import("@/lib/collectionRowMenu");
+    let answer: (path: string | null) => void = () => {};
+    vi.mocked(invoke).mockImplementation((command) => (
+      command === "collection_page_path"
+        ? new Promise((resolve) => { answer = resolve; })
+        : Promise.resolve(command === "menu_panel_close" ? { closed: true, key_returned: true } : null)
+    ));
+    window.localStorage.setItem(MENU_MODE_STORAGE_KEY, "window");
+    resetMenuPanelSourceForTests(true);
+    const calls = (name: string) => vi.mocked(invoke).mock.calls.filter(([command]) => command === name).map(([, args]) => args);
+    const choose = (request: number, id: string) => act(() => {
+      const payload = { menu: 1, seq: request, body: { kind: "action", request, action: { kind: "run", id } } };
+      window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_SOURCE_EVENT, { detail: { event: MENU_PANEL_TO_SOURCE_EVENT, payload } }));
+    });
+    try {
+      const { container } = renderSidebar(defaultProps);
+      const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+      const allowed = fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
+      expect(allowed).toBe(false);
+      const [opened] = calls("menu_panel_open") as [{ request: { anchor: unknown; opener: unknown; spec: unknown; size: unknown } }];
+      expect(opened.request.anchor).toEqual({ x: 32, y: 48, width: 0, height: 0 });
+      expect(opened.request.opener).toEqual({ kind: "point" });
+      // The page is being looked up: Reveal in Finder waits for it.
+      expect(opened.request.spec).toEqual(collectionRowSpec({ pageFound: false }));
+      expect(opened.request.size).toEqual({ width: 240, height: 10 + 3 * 32 });
+      await act(async () => {});
+      expect(screen.queryByRole("menu")).toBeNull();
+
+      await act(async () => answer("/vault/Collections/alpha.md"));
+      await waitFor(() => expect((calls("menu_panel_update").at(-1) as { spec: unknown } | undefined)?.spec).toEqual(collectionRowSpec({ pageFound: true })));
+
+      choose(1, "reveal");
+      await waitFor(() => expect(revealItemInDir).toHaveBeenCalledWith("/vault/Collections/alpha.md"));
+      choose(2, "delete");
+      expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+    } finally {
+      window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+      resetMenuPanelSourceForTests();
+    }
   });
 
   it("closes a frozen thumbnail hover preview when the card menu closes away from the thumbnail", async () => {
@@ -2210,68 +2217,27 @@ describe("the list's look while the width moves (user's decision of 01.11.2026)"
   });
 });
 
-describe("sidebar compact rows (PLAN 50.36)", () => {
+describe("sidebar rows' previews", () => {
   const thumb = (slug: string) => ({
     slug,
     url: `asset://localhost/thumbs/${slug}.jpg`,
     text: false,
     hasThumb: true,
   });
-  const stackOf = (container: HTMLElement, rowKey: string) =>
-    container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-compact-stack]`);
 
-  it("stacks the first three thumbnails at the item's end, the 7.23 stack at 32px", () => {
+  // The narrow table's stack of mini-cards is gone (user's decision of
+  // 15.11.2026): a row draws each thumbnail once, in its strip.
+  it("draws a row's thumbnails in its strip alone and keeps the count one node", () => {
     const { container } = renderSidebar({
       ...defaultProps,
       orderedTags: [tag("alpha", 5)],
       channelPreviews: new Map([["alpha", ["a", "b", "c", "d"].map((slug) => thumb(`alpha-${slug}`))]]),
     });
-    const stack = stackOf(container, "tag:alpha") as HTMLElement;
-    expect(stack.closest("[data-sidebar-meta-cell]")).not.toBeNull();
-    expect(stack.style.height).toBe("32px");
-    const cards = stack.querySelectorAll<HTMLElement>('[data-sidebar-stack-card="trigger"]');
-    expect(cards).toHaveLength(3);
-    // One projection: every card laid out at the front one's place, moved
-    // toward the vanishing point and scaled by 0.88^d; on hover the bottom
-    // card stays and the ones above slide toward the name, the top one 3px:
-    // only the place moves.
-    expect(cards[0]!.style.width).toBe("32px");
-    expect(new Set(Array.from(cards, (card) => card.style.left))).toEqual(new Set(["0px"]));
-    const place = (x: string, y: string, scale: string) => `translate(${x}px, ${y}px) scale(${scale})`;
-    // The collection's first card is the deck's top one.
-    expect(cards[0]!.style.zIndex).toBe("2");
-    expect(cards[0]!.style.transformOrigin).toBe("center");
-    expect(cards[0]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("0", "0", "1"));
-    expect(cards[0]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("-3", "0", "1"));
-    expect(cards[1]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("7.594", "0", "0.88"));
-    expect(cards[1]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("6.19", "0", "0.88"));
-    expect(cards[2]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("14.276", "0", "0.774"));
-    expect(cards[2]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("14.276", "0", "0.774"));
-    expect(stack.style.getPropertyValue("--channel-icon-easing")).toMatch(/^linear\(0, .*, 1\)$/);
-    expect(stack.style.getPropertyValue("--channel-icon-duration")).toBe("441ms");
-    // The strip keeps its own tiles; the stack's are not counted among them.
-    expect(container.querySelectorAll('[data-sidebar-row-key="tag:alpha"] [data-sidebar-preview-thumbnail="trigger"]')).toHaveLength(4);
-  });
-
-  it("keeps the count one node of the item and draws no stack without cards", () => {
-    const { container } = renderSidebar({
-      ...defaultProps,
-      orderedTags: [tag("empty", 0), tag("alpha", 5)],
-      channelPreviews: new Map([["empty", []], ["alpha", [thumb("alpha-a")]]]),
-    });
+    const row = container.querySelector<HTMLElement>('[data-sidebar-row-key="tag:alpha"]')!;
+    expect(row.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]')).toHaveLength(4);
+    expect(row.querySelectorAll("img")).toHaveLength(4);
+    expect(row.querySelector("[data-sidebar-meta-cell]")).toBeEmptyDOMElement();
     expect(screen.getByText("5")).toHaveAttribute("data-sidebar-meta-count");
-    expect(container.querySelector('[data-sidebar-row-key="tag:alpha"] [data-sidebar-row-body]')).not.toBeNull();
-    expect(stackOf(container, "tag:empty")).toBeNull();
-    const single = stackOf(container, "tag:alpha")!.querySelector<HTMLElement>("[data-channel-icon-card]")!;
-    expect(single.style.getPropertyValue("--channel-icon-hover")).toBe(single.style.getPropertyValue("--channel-icon-rest"));
-  });
-
-  it("holds placeholder cards while the thumbnails are on the way", () => {
-    const { container } = renderSidebar({
-      ...defaultProps,
-      orderedTags: [tag("alpha", 2)],
-    });
-    expect(stackOf(container, "tag:alpha")!.querySelectorAll("[data-sidebar-stack-placeholder]")).toHaveLength(2);
   });
 });
 
@@ -2434,7 +2400,7 @@ describe("the keyboard's focus on a row (SPEC_KEYBOARD.md, М5)", () => {
   const row = (container: HTMLElement, key: string) =>
     container.querySelector<HTMLElement>(`[data-sidebar-row-key="${key}"]`)!;
 
-  it("marks the row, and it lights no name and opens no stack", () => {
+  it("marks the row, and it lights no name", () => {
     const { container } = renderSidebar({ ...defaultProps, keyboardFocusRowKey: "tag:alpha" });
     const nav = container.querySelector("[data-sidebar-scroll]")!;
     const alpha = row(container, "tag:alpha");
@@ -2443,8 +2409,6 @@ describe("the keyboard's focus on a row (SPEC_KEYBOARD.md, М5)", () => {
     // The rule that brightens a name (global.css) needs both of these.
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(alpha).not.toHaveAttribute("data-sidebar-row-focused");
-    // A compact item's stack opens for this (SidebarAnswerRowContext).
-    expect(alpha).not.toHaveAttribute("data-sidebar-row-answer");
     expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeNull();
   });
 
@@ -2476,12 +2440,10 @@ describe("the keyboard's focus on a row (SPEC_KEYBOARD.md, М5)", () => {
     pointerTo(beta, 10);
     rest();
     expect(beta).toHaveAttribute("data-sidebar-row-focused", "true");
-    expect(beta).toHaveAttribute("data-sidebar-row-answer", "true");
 
     view.rerender(sidebarTree({ ...defaultProps, keyboardFocusRowKey: "tag:alpha" }));
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(beta).not.toHaveAttribute("data-sidebar-row-focused");
-    expect(beta).not.toHaveAttribute("data-sidebar-row-answer");
     expect(row(view.container, "tag:alpha")).toHaveAttribute("data-sidebar-row-keyboard-focus", "true");
   });
 

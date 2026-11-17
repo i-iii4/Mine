@@ -212,17 +212,29 @@ pub fn report_drop_slot(app: AppHandle, webview: Webview, index: Option<usize>) 
     }
 }
 
-/// The calling tab drags cards over its window's tab bar at `hover`, or no
-/// longer (В86). `seq` numbers the page's card reports: a late one is
-/// dropped (В10).
+/// The calling tab began to drag cards (SPEC_OUTSIDE_WINDOW.md, ПК8): followed
+/// over every window until its button goes up. `seq` numbers the page's card
+/// reports: a late one is dropped (SPEC_TABS.md, В10).
 #[tauri::command]
-pub fn report_card_drag(app: AppHandle, webview: Webview, seq: u32, hover: Option<tabs::drag::CardDragHover>) {
-    tabs::drag::report_card_drag(&app, webview.label(), seq, hover);
+pub fn begin_card_drag(app: AppHandle, webview: Webview, seq: u32, begin: tabs::drag::CardDragBegin) {
+    tabs::drag::begin_card_drag(&app, webview.label(), seq, begin);
 }
 
-/// The calling tab let cards go over its window's tab bar: a tab each at the
-/// slot under `drop.x` (В86). `seq` as for `report_card_drag`.
+/// The dragged card's title and look, read after the drag began.
 #[tauri::command]
-pub fn drop_cards_on_tab_bar(app: AppHandle, webview: Webview, seq: u32, drop: tabs::drag::CardBarDrop) {
-    tabs::drag::drop_cards(&app, webview.label(), seq, drop);
+pub fn update_card_drag(app: AppHandle, webview: Webview, seq: u32, update: tabs::drag::CardDragUpdate) {
+    tabs::drag::update_card_drag(&app, webview.label(), seq, update);
+}
+
+/// The calling tab ended its drag of cards: let go or cancelled.
+#[tauri::command]
+pub fn end_card_drag(app: AppHandle, webview: Webview, seq: u32) {
+    tabs::drag::end_card_drag(&app, webview.label(), seq);
+}
+
+/// `Open N tabs?` was answered in the window whose bar took the cards (В86,
+/// п. 6).
+#[tauri::command]
+pub fn answer_card_tabs(app: AppHandle, open: bool) {
+    tabs::drag::answer_card_tabs(&app, open);
 }

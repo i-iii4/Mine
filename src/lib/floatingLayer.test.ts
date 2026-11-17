@@ -1,9 +1,31 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { MENU_PLATE_GAP_PX, menuPlateOf, menuPlateOffsets, plateSideOffset } from "./floatingLayer";
+import { MENU_PLATE_GAP_PX, menuPlateOf, menuPlateOffsets, plateMenuAlign, plateSideOffset } from "./floatingLayer";
 
 const css = readFileSync(path.join(process.cwd(), "src/styles/global.css"), "utf8");
+
+// SPEC_MENU_WINDOW.md, МО7 (user's decision of 16.11.2026): the cases of
+// `plate_align`'s tests in src-tauri/src/menu_panel/geometry.rs.
+describe("the edge of its plate a button's menu stands on", () => {
+  const bound = { left: 0, right: 1440 };
+  const plate = (left: number) => ({ left, right: left + 24 });
+
+  it("is the left edge wherever the menu has room to the right, to the bound's last point", () => {
+    expect(plateMenuAlign(plate(700), 240, bound)).toBe("start");
+    expect(plateMenuAlign(plate(1200), 240, bound)).toBe("start");
+  });
+
+  it("turns onto the right edge where the bound's right edge leaves no room and its left does", () => {
+    expect(plateMenuAlign(plate(1201), 240, bound)).toBe("end");
+    // A screen left of the main one: negative points.
+    expect(plateMenuAlign(plate(-100), 240, { left: -1920, right: 0 })).toBe("end");
+  });
+
+  it("is the left edge with room on neither side: the layer shifts the menu in", () => {
+    expect(plateMenuAlign(plate(100), 240, { left: 0, right: 250 })).toBe("start");
+  });
+});
 
 // DESIGN_SYSTEM.md, «Всплывающие элементы», «Отступ от кнопки» (11.10.2026).
 describe("a menu's place off its button's plate", () => {

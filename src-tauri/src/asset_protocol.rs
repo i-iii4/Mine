@@ -1,8 +1,6 @@
 #[cfg(feature = "desktop")]
 use std::borrow::Cow;
 #[cfg(feature = "desktop")]
-use std::fs::File;
-#[cfg(feature = "desktop")]
 use std::io::{Read, Seek, SeekFrom};
 #[cfg(feature = "desktop")]
 use std::path::{Path, PathBuf};
@@ -114,8 +112,9 @@ fn build_asset_response<R: Runtime>(
         return build_range_response(resp, &path, len, mime_type, range_header);
     }
 
-    match std::fs::read(&path) {
+    match crate::storage::cloud_files::read(&path) {
         Ok(buf) => response_with_body(resp.header(CONTENT_LENGTH, buf.len()), buf),
+        Err(err) if crate::storage::cloud_files::is_refusal(&err) => in_cloud_response(resp, &path),
         Err(err) => {
             log::error!("asset read failed path={} err={}", path.display(), err);
             empty_response(resp.status(StatusCode::INTERNAL_SERVER_ERROR))
@@ -209,6 +208,9 @@ fn build_range_response(
                     .header(CONTENT_LENGTH, nbytes),
                 buf,
             ),
+            Err(err) if crate::storage::cloud_files::is_refusal(&err) => {
+                in_cloud_response(resp, path)
+            }
             Err(err) => {
                 log::error!(
                     "asset range read failed path={} err={}",
@@ -226,8 +228,12 @@ fn build_range_response(
 
         for (start, end) in ranges {
             let nbytes = end + 1 - start;
-            let Ok(buf) = read_file_range(path, start, nbytes) else {
-                return empty_response(resp.status(StatusCode::INTERNAL_SERVER_ERROR));
+            let buf = match read_file_range(path, start, nbytes) {
+                Ok(buf) => buf,
+                Err(err) if crate::storage::cloud_files::is_refusal(&err) => {
+                    return in_cloud_response(resp, path);
+                }
+                Err(_) => return empty_response(resp.status(StatusCode::INTERNAL_SERVER_ERROR)),
             };
             multipart.extend_from_slice(boundary_sep.as_bytes());
             multipart.extend_from_slice(format!("{CONTENT_TYPE}: {mime_type}\r\n").as_bytes());
@@ -252,13 +258,41 @@ fn build_range_response(
 
 #[cfg(feature = "desktop")]
 fn read_file_range(path: &Path, start: u64, len: u64) -> std::io::Result<Vec<u8>> {
-    let mut file = File::open(path)?;
+    let mut file = crate::storage::cloud_files::open(path)?;
     file.seek(SeekFrom::Start(start))?;
     let mut take = file.take(len);
     let mut buf = Vec::with_capacity(len as usize);
     take.read_to_end(&mut buf)?;
     Ok(buf)
 }
+
+/// The answer to a read iCloud refused (`EDEADLK`): the file's contents are
+/// not on this Mac and this read may not bring them. Not an error of the file
+/// or of Mine, so it is not logged as one: about 15 000 such reads filled the
+/// log on 17.11.2026. iCloud is asked for the file, since whoever asked for
+/// the original (the open card, the picture viewer, the article) wants it,
+/// and the same request a moment later finds it here (SPEC_CLOUD_STORAGE.md,
+/// Х11, «Отказ чтения»). The status says what happened to whoever reads it:
+/// `503 Service Unavailable` with `Retry-After`, the contents being
+/// unavailable for now rather than missing.
+#[cfg(feature = "desktop")]
+fn in_cloud_response(
+    resp: tauri::http::response::Builder,
+    path: &Path,
+) -> Response<Cow<'static, [u8]>> {
+    log::debug!("asset in iCloud, asked to bring it down: {}", path.display());
+    crate::storage::icloud_downloads::request_downloads([path]);
+    empty_response(
+        resp.status(StatusCode::SERVICE_UNAVAILABLE)
+            .header(RETRY_AFTER, IN_CLOUD_RETRY_AFTER_SECONDS),
+    )
+}
+
+/// `Retry-After` of [`in_cloud_response`], in seconds: the poll interval of
+/// the open card's download indicator (SPEC_CLOUD_STORAGE.md, Х9), the
+/// soonest anything in Mine asks again.
+#[cfg(feature = "desktop")]
+const IN_CLOUD_RETRY_AFTER_SECONDS: u64 = 1;
 
 #[cfg(feature = "desktop")]
 fn response_with_body<T: Into<Cow<'static, [u8]>>>(
@@ -406,5 +440,31 @@ mod tests {
         std::fs::write(&path, b"not enough image magic").unwrap();
 
         assert_eq!(mime_type_for_file(&path), "image/jpeg");
+    }
+
+    /// «Отказ чтения» (SPEC_CLOUD_STORAGE.md): an original whose read iCloud
+    /// refuses (`EDEADLK`) is answered as contents unavailable for now, `503`
+    /// with `Retry-After`, never as a server failure, for a whole read and a
+    /// range read alike. Until 17.11.2026 each was a `500` and an ERROR line,
+    /// some 15 000 of them in a morning.
+    #[test]
+    fn an_original_icloud_refuses_is_answered_as_unavailable_for_now() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clip.mp4");
+        std::fs::write(&path, b"the video").unwrap();
+        crate::storage::cloud_files::test_seam::refuse_reads_of(&path);
+
+        let whole = crate::storage::cloud_files::read(&path).unwrap_err();
+        let range = read_file_range(&path, 0, 4).unwrap_err();
+        assert!(crate::storage::cloud_files::is_refusal(&whole));
+        assert!(crate::storage::cloud_files::is_refusal(&range));
+
+        let response = in_cloud_response(Response::builder(), &path);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers().get(RETRY_AFTER).and_then(|value| value.to_str().ok()),
+            Some("1")
+        );
+        assert!(response.body().is_empty());
     }
 }

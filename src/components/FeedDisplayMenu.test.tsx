@@ -34,7 +34,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
       .map((item) => item.textContent ?? "");
   }
 
-  it("is the standard chrome icon button with a command menu aligned to its right edge", async () => {
+  it("is the standard chrome icon button with a command menu opening right and down off it (SPEC_MENU_WINDOW.md, МО7)", async () => {
     const user = userEvent.setup();
     render(<FeedDisplayMenu />);
     const trigger = screen.getByRole("button", { name: "Display options" });
@@ -43,20 +43,19 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     await user.click(trigger);
     const menu = screen.getByRole("menu");
     expect(menu).toHaveAttribute("data-floating-menu", "action");
-    expect(menu).toHaveAttribute("data-align", "end");
+    expect(menu).toHaveAttribute("data-align", "start");
   });
 
   it("offers Sort, Show and Spacing as radio groups, each marking the current choice", async () => {
     await openMenu();
-    // The open card's view follows the feed's groups (SPEC_CARD_PEEK.md, О1); its
-    // group carries the mark of the shared radio group it is drawn by (`TrialRadios`).
-    const groups = screen.getAllByRole("group").filter((group) => !group.hasAttribute("data-display-trial"));
-    expect(screen.getAllByRole("group").at(-1)).toHaveAttribute("data-display-trial");
     // Each group is named by the caption above it, in this order (Д2); media
-    // placement is no longer a choice (Д19).
-    expect(groups.map((group) =>
+    // placement is no longer a choice (Д19). The open card's view follows
+    // the feed's groups and ends the panel (SPEC_CARD_PEEK.md, О1).
+    const all = screen.getAllByRole("group");
+    expect(all.map((group) =>
       document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
-    )).toEqual(["Sort", "Show", "Spacing"]);
+    )).toEqual(["Sort", "Show", "Spacing", "Element view"]);
+    const groups = all.slice(0, 3);
     expect(groups.map((group) => group.textContent)).toEqual([
       "Newest firstOldest first",
       "Media and TextText on HoverMedia Only",
@@ -69,7 +68,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     // Two between the feed's groups and one before the open card's view,
     // which ends the panel.
     expect(screen.getAllByRole("separator")).toHaveLength(3);
-    expect(screen.getByRole("menu").lastElementChild).toHaveAttribute("data-card-view-menu");
+    expect(screen.getByRole("menu").lastElementChild).toBe(all[3]);
   });
 
   it.each(["feed", "graph"] as const)(
@@ -80,16 +79,18 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
       window.localStorage.setItem("mine.sidebar.listSpacing", "table");
       window.localStorage.setItem("mine.sidebar.listStyle", "plain");
       const user = userEvent.setup();
-      render(<DisplayMenu panel={panel}>{null}</DisplayMenu>);
+      render(<DisplayMenu panel={panel} view={{ groups: [], largest: [], apply: () => false }} />);
       await user.click(screen.getByRole("button", { name: "Display options" }));
       for (const caption of ["Sidebar columns", "List spacing", "List style", "Sidebar style", "Compact stack edge"]) {
         expect(screen.queryByRole("group", { name: caption })).toBeNull();
       }
       expect(screen.queryByText("Sidebar columns")).toBeNull();
       expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
-      // What the panel holds of its own: the open card's view alone, after its separator.
-      expect(screen.getAllByRole("separator")).toHaveLength(1);
-      expect(screen.getByRole("menu").lastElementChild).toHaveAttribute("data-card-view-menu");
+      // What the panel holds of its own: the open card's view alone.
+      expect(screen.queryByRole("separator")).toBeNull();
+      expect(screen.getAllByRole("group").map((group) =>
+        document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+      )).toEqual(["Element view"]);
       const root = document.documentElement;
       for (const attribute of root.getAttributeNames()) {
         expect(attribute).not.toMatch(/^data-sidebar-(list-roomy|list-toc|hide-|stack-left)/);

@@ -8,6 +8,7 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { MENU_MODE_STORAGE_KEY } from "@/lib/menuMode";
 import { resetMenuPanelSourceForTests } from "@/lib/menuPanelSource";
+import { MENU_PANEL_TO_SOURCE_EVENT } from "@/lib/menuPanelProtocol";
 import { lightBlock } from "@/test/blocks";
 import { Grid } from "./Grid";
 
@@ -90,5 +91,30 @@ describe("the feed's right click menu in the menu panel", () => {
     expect(invokes("menu_panel_close")).toEqual([]);
     unmount();
     expect(invokes("menu_panel_close")).toEqual([expect.objectContaining({ menu: 1, reason: "source" })]);
+  });
+
+  // SPEC_CARD_STATES.md, С7.8 (user's decision of 16.11.2026): the card a
+  // right click opened the menu panel on keeps its hover look while the menu
+  // is up, and after it closed until the pointer shows itself off the card.
+  it("holds the right-clicked card in its hover look while its menu is up in the panel", async () => {
+    render(<Grid {...PROPS} />);
+    await settle();
+    const card = document.querySelector('[data-block-slug="alpha-block"]') as HTMLElement;
+    const frame = () => card.closest("[data-feed-card-frame]") ?? card;
+    fireEvent.contextMenu(card, { clientX: 300, clientY: 200 });
+    await settle();
+    expect(frame()).toHaveAttribute("data-card-lift-pinned");
+    // The panel took the pointer: the page hears it leave.
+    fireEvent.pointerLeave(document.querySelector("[data-grid-scroll]")!);
+    expect(frame()).toHaveAttribute("data-card-lift-pinned");
+    act(() => {
+      const payload = { menu: 1, seq: 1, body: { kind: "closed", reason: "outside", key_returned: true } };
+      window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_SOURCE_EVENT, { detail: { event: MENU_PANEL_TO_SOURCE_EVENT, payload } }));
+    });
+    await settle();
+    expect(frame()).toHaveAttribute("data-card-lift-pinned");
+    // The pointer comes back off the card: the look goes.
+    fireEvent.pointerOver(document.querySelector("[data-grid-scroll]")!);
+    expect(frame()).not.toHaveAttribute("data-card-lift-pinned");
   });
 });

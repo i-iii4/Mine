@@ -9,7 +9,7 @@
 // the choice it opened with or made itself. With Peek the right part's width
 // decides where it stands (О16).
 
-import { trialChoice } from "./compactStack";
+import { storedChoice } from "./storedChoice";
 
 /** The two views of an open card. */
 export type CardView = "full" | "peek";
@@ -18,8 +18,8 @@ export const CARD_VIEW_STORAGE_KEY = "mine.detail.cardView";
 /** What the Display panel calls each view. */
 export const CARD_VIEW_LABELS: Record<CardView, string> = { full: "Full page", peek: "Peek" };
 
-// Nothing on the root: the view is read when a card opens.
-const view = trialChoice<CardView>(CARD_VIEW_STORAGE_KEY, "full", CARD_VIEWS, () => {});
+// The view is read when a card opens.
+const view = storedChoice<CardView>(CARD_VIEW_STORAGE_KEY, "full", CARD_VIEWS);
 
 export const getCardView = view.get;
 export const setCardView = view.set;
@@ -27,7 +27,7 @@ export const reloadCardView = view.reload;
 export const useCardView = view.use;
 
 /** What decides the open card's view (О16; user's decisions of 30.10.2026):
- *  the «Card view» it stands by (`chosen`: the one chosen when it opened,
+ *  the «Element view» it stands by (`chosen`: the one chosen when it opened,
  *  О1, or the one its own button chose since, О9) and whether the right part
  *  holds the window (`areaHolds`, `peekAreaHoldsWindow` in cardPeek.ts),
  *  never the view it stands in now. */
@@ -44,7 +44,7 @@ export function openCardView({ chosen, areaHolds }: OpenCardViewInputs): CardVie
 }
 
 /** Whether the full page offers the way to the window (О9): whenever the
- *  right part holds the window, whatever «Card view» the card stands by. */
+ *  right part holds the window, whatever «Element view» the card stands by. */
 export function offersPeekCollapse(inputs: OpenCardViewInputs): boolean {
   return inputs.areaHolds && openCardView(inputs) === "full";
 }
@@ -56,10 +56,10 @@ export type PeekWidth = "fit" | "fill";
 export const PEEK_WIDTHS: readonly PeekWidth[] = ["fit", "fill"];
 export const PEEK_WIDTH_STORAGE_KEY = "mine.detail.peekWidth";
 /** What the Display panel calls each width. */
-export const PEEK_WIDTH_LABELS: Record<PeekWidth, string> = { fit: "Fit card", fill: "Fill" };
+export const PEEK_WIDTH_LABELS: Record<PeekWidth, string> = { fit: "Fit element", fill: "Fill" };
 
-// Nothing on the root: the window reads it as it lays itself out.
-const peekWidth = trialChoice<PeekWidth>(PEEK_WIDTH_STORAGE_KEY, "fit", PEEK_WIDTHS, () => {});
+// The window reads it as it lays itself out.
+const peekWidth = storedChoice<PeekWidth>(PEEK_WIDTH_STORAGE_KEY, "fit", PEEK_WIDTHS);
 
 export const getPeekWidth = peekWidth.get;
 export const setPeekWidth = peekWidth.set;

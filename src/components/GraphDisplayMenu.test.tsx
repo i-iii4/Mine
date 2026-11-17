@@ -37,7 +37,7 @@ describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель граф
       .map((item) => item.textContent ?? "");
   }
 
-  it("is the feed's Display button: the standard chrome icon with a menu aligned to its right edge", async () => {
+  it("is the feed's Display button: the standard chrome icon with a menu opening right and down off it", async () => {
     const user = userEvent.setup();
     render(<GraphDisplayMenu />);
     const trigger = screen.getByRole("button", { name: "Display options" });
@@ -46,7 +46,7 @@ describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель граф
     await user.click(trigger);
     const menu = screen.getByRole("menu");
     expect(menu).toHaveAttribute("data-floating-menu", "action");
-    expect(menu).toHaveAttribute("data-align", "end");
+    expect(menu).toHaveAttribute("data-align", "start");
     expect(menu).toHaveAttribute("data-display-panel", "graph");
   });
 
@@ -80,11 +80,11 @@ describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель граф
 
   it("offers one Links group with Wikilinks and Related notes, both on by default, and no switch for collections", async () => {
     await openMenu();
-    // The trial groups follow (PLAN 47.6, 47.7).
-    const groups = screen.getAllByRole("group").filter((group) => !group.hasAttribute("data-display-trial"));
+    // The open card's view follows (SPEC_CARD_PEEK.md, О1).
+    const groups = screen.getAllByRole("group");
     expect(groups.map((group) =>
       document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
-    )).toEqual(["Links"]);
+    )).toEqual(["Links", "Element view"]);
     expect(within(groups[0]!).getAllByRole("menuitemcheckbox").map((item) => item.textContent))
       .toEqual(["Wikilinks", "Related notes"]);
     expect(switchedOn()).toEqual(["Wikilinks", "Related notes"]);

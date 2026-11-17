@@ -22,7 +22,7 @@ const SPEC: MenuSpec = cardMenuSpec({ hasUrl: true, disconnectFrom: null, tableC
 const CHANGED: MenuSpec = cardMenuSpec({ hasUrl: true, disconnectFrom: null, tableCommands: [], picker: { ...PICKER, selected: ["Web"] } });
 const TOGGLE: MenuAction = { kind: "widget", id: "connect.picker", action: { kind: "toggle_collection", collection: "Web", connected: false } };
 const ANCHOR = { x: 100, y: 100, width: 24, height: 24 };
-const PLATE: MenuOpener = { kind: "plate", align: "end" };
+const PLATE: MenuOpener = { kind: "plate" };
 
 function backend(event: string, payload: unknown) {
   window.dispatchEvent(new CustomEvent(event, { detail: { event, payload } }));

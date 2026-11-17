@@ -97,7 +97,7 @@ pub enum NoteSaveError {
     SourceNotFound { source_slug: String },
     /// The note is a collection page, or the new body would make it one
     /// (Л2.5).
-    #[error("'{source_slug}' is a collection page, not a card")]
+    #[error("'{source_slug}' is a collection page, not an element")]
     NotACard { source_slug: String },
     #[error("{message}")]
     Internal { message: String },
@@ -151,7 +151,7 @@ pub enum NoteEditError {
     #[error("'{source_slug}' is not on disk")]
     SourceNotFound { source_slug: String },
     /// The note is a collection page: the editor does not open it (Л2.5).
-    #[error("'{source_slug}' is a collection page, not a card")]
+    #[error("'{source_slug}' is a collection page, not an element")]
     NotACard { source_slug: String },
     #[error("{message}")]
     Internal { message: String },

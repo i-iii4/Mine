@@ -88,22 +88,64 @@ export type CardAssociations = { generation: ProjectionRevision; slug: string;
 groups: CardAssociationGroup[] }
 
 /**
- * Cards let go over the bar (`drop_cards_on_tab_bar`, В86): one tab each,
- * the grabbed card's first, on the placeholder's slot, and shown; the rest
- * after it in the feed's order (decision of 15.11.2026).
+ * What a tab page drags, said as the drag begins (`begin_card_drag`).
  */
-export type CardBarDrop = { x: number; title: string; views: TabView[] }
-
-/**
- * Where cards dragged in a tab's page are over its window's bar
- * (`report_card_drag`, В86): `x` in logical points from the bar's left
- * edge, which is the page's left edge too.
- */
-export type CardDragHover = { x: number;
+export type CardDragBegin = {
 /**
  * The title of the card the drag holds (В47).
  */
-title: string }
+title: string;
+/**
+ * A tab each, the grabbed card's first, the rest after it in the feed's
+ * order (В86, п. 5).
+ */
+views: TabView[];
+/**
+ * The dragged cards, for a row of collections of another window.
+ */
+slugs: string[];
+/**
+ * The card was taken from a thumbnail of the sidebar: the feed of an
+ * open collection takes it, in this window and another
+ * (SPEC_FRONTEND.md, «Бросок миниатюры в открытую коллекцию»).
+ */
+thumbnail: boolean;
+/**
+ * So many tabs that the bar's window asks `Open N tabs?` first (В86, п. 6).
+ */
+confirm: boolean;
+/**
+ * The card as the outside window draws it; none keeps it in the page.
+ */
+stack: CardStack | null }
+
+/**
+ * `card-drag-drop`: dragged cards were let go over this page at `point`.
+ */
+export type CardDragDrop = { point: ScreenPoint; slugs: string[]; thumbnail: boolean }
+
+/**
+ * `card-drag-over`: dragged cards are over this page of another window at
+ * `point` (its points from the page's top left), or no longer (`None`).
+ */
+export type CardDragOver = { point: ScreenPoint | null;
+/**
+ * Taken from a thumbnail of the sidebar (`CardDragBegin::thumbnail`).
+ */
+thumbnail: boolean }
+
+/**
+ * What came of the dragged cards after the drag began
+ * (`update_card_drag`): the grabbed card's title once it was read, and its
+ * card as the outside window draws it once the page has it.
+ */
+export type CardDragUpdate = { title: string; stack: CardStack | null }
+
+/**
+ * `card-drag-view`: the dragged card of the page's drag `seq` is drawn
+ * outside.
+ */
+export type CardDragViewShown = { seq: number }
 
 /**
  * What the file at a card's `image_url` becomes.
@@ -118,6 +160,35 @@ export type CardFileRole = "file" | "thumbnail"
  * ownership metadata distinguishes bodyless media from metadata-only links.
  */
 export type CardKind = "article" | "media" | "link" | "channel"
+
+/**
+ * What the dragged card is drawn of (`DragCardStackPreview`): the stack's
+ * cards, front first, at most its four layers.
+ */
+export type CardStack = { blocks: LightBlock[];
+/**
+ * Each card's rebuilt thumbnail's version, where the page keeps one.
+ */
+thumb_versions: (number | null)[]; look: OutsideLook }
+
+/**
+ * `card-tabs-confirm`: a bar takes `count` cards dragged in this page once
+ * `Open N tabs?` is answered here (`answer_card_tabs`): the window the drag
+ * began in keeps the keyboard (В86, decision of 16.11.2026).
+ */
+export type CardTabsConfirm = { count: number }
+
+/**
+ * What a command that changes a space answers with: its own answer and the
+ * cards it changed. The calling tab reads those rows instead of its whole
+ * feed (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+ */
+export type Changed<T> = { value: T;
+/**
+ * `blocks.id` of every card row the command wrote, added or removed.
+ * `None` when the cards are not known: the feed is read in full.
+ */
+cards: number[] | null }
 
 /**
  * Serializable channel data for the frontend.
@@ -216,7 +287,13 @@ export type CommandError = { kind: "no_vault" } |
  * page (`type: channel`): a collection exists only as its page. Nothing
  * was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
  */
-{ kind: "collection_not_found"; message: { collection: string } } | { kind: "internal"; message: string }
+{ kind: "collection_not_found"; message: { collection: string } } |
+/**
+ * A newer search of the same tab took this one's place; its page has
+ * already dropped the request and never shows this (SPEC_SEARCH.md,
+ * «Отмена устаревшего запроса»).
+ */
+{ kind: "search_superseded" } | { kind: "internal"; message: string }
 
 /**
  * How the person resolves a conflict (ВК8).
@@ -405,7 +482,7 @@ export type DropItem =
  */
 { kind: "tab"; tab_id: TabId } |
 /**
- * Cards dragged in this window's visible tab (В86), shown by the title
+ * Cards dragged in a tab page of Mine (В86), shown by the title
  * of the card the drag holds. `dropped`: the button went up at `x`; the
  * bar answers with the slot there (`report_drop_slot`).
  */
@@ -431,6 +508,45 @@ source_range?: TextSourceRange | null }
  * pages never overlap or skip.
  */
 export type FeedOrder = "newest" | "oldest"
+
+/**
+ * Where a page of the feed starts: after the card that has this place in
+ * the feed's order (SPEC_STORAGE.md, «Страница ленты по ключу»). The page
+ * takes both from the row of the last card it holds. The token names a
+ * place, not a row: the card may be gone by the time the page is read.
+ */
+export type FeedPageToken = { saved_at: string; slug: string }
+
+/**
+ * The named cards as the feed of a place holds them now: what a page that
+ * knows which cards changed reads instead of the whole feed
+ * (SPEC_STORAGE.md, «Частичное чтение ленты»).
+ */
+export type FeedPatch = { path: string; generation: ProjectionRevision;
+/**
+ * The named cards that stand in the feed within the page's range, in
+ * feed order. A named card that is not here left the page's list.
+ */
+rows: FeedPatchRow[]; total_blocks: number;
+/**
+ * Whether the feed holds cards after the page's range.
+ */
+has_more: boolean;
+/**
+ * The page's last card is not in the feed, so its range cannot be told:
+ * the page reads the feed in full.
+ */
+range_lost: boolean }
+
+/**
+ * One named card as the feed holds it now, and where it stands.
+ */
+export type FeedPatchRow = { block: LightBlock;
+/**
+ * `blocks.id` of the nearest card before this one in the feed that is
+ * not among the named cards; `None` when no such card stands before it.
+ */
+after: number | null }
 
 export type FeedPlaybackContainer = "mp4" | "webm"
 
@@ -463,6 +579,43 @@ export type FeedPreviewManifest = { kind: FeedPreviewKind; primary_preview_path:
  * cropped to fixed slots. See `SPEC_CARD_MEDIA_GEOMETRY.md`.
  */
 export type FeedPreviewTile = { source_path: string; preview_path: string | null; width: number | null; height: number | null; preview_width?: number | null; preview_height?: number | null; is_video: boolean; is_video_poster: boolean }
+
+/**
+ * Why a page reads its feed.
+ */
+export type FeedReadReason =
+/**
+ * The place, the order or the space was opened or changed.
+ */
+"route" |
+/**
+ * The next page of the feed on screen.
+ */
+"page" |
+/**
+ * A command of this page changed the space.
+ */
+"own_command" |
+/**
+ * News of the space: another tab's command, the watcher, a sync pass.
+ */
+"news" |
+/**
+ * A card's preview became ready.
+ */
+"preview" |
+/**
+ * The menu of a card the feed held in place closed.
+ */
+"card_menu" |
+/**
+ * A failed read asked again.
+ */
+"retry" |
+/**
+ * The search overlay's recent cards, shown before a query is typed.
+ */
+"search"
 
 /**
  * Why a browser has no file for an address and no answer of the server to say
@@ -523,11 +676,6 @@ export type GraphScopeKind = "current_route" | "library"
 export type GraphSnapshot = { generation: ProjectionRevision; nodes: GraphNode[]; links: GraphLink[]; total_cards: number; total_collections: number; current_collection: string | null; truncated: boolean; truncation_reason: GraphTruncationReason | null; can_materialize_full: boolean; visible_nodes: number; visible_links: number; total_nodes: number; total_links: number }
 
 export type GraphTruncationReason = "large_library"
-
-/**
- * A bounded row patch, never a replacement for route membership or pagination.
- */
-export type GridRowsSnapshot = { path: string; generation: ProjectionRevision; blocks: LightBlock[] }
 
 export type GridSnapshot = { generation: ProjectionRevision; blocks: LightBlock[]; total_blocks: number; has_more: boolean }
 
@@ -621,7 +769,8 @@ end: number }
 
 /**
  * A lightweight block for list/grid views. Body is truncated (max 500 chars),
- * description is omitted, source is omitted.
+ * description is omitted, source is omitted. Read back from a page too: the
+ * outside window shows the card a page sends (SPEC_OUTSIDE_WINDOW.md, НО7).
  */
 export type LightBlock = { id: number; slug: string; block_type: BlockType; card_kind: CardKind; title: string | null; content_heading: string | null; display_title: string | null; fallback_label: string; url: string | null; media_file: string | null; thumbnail: string | null; saved_at: string; width: number | null; height: number | null; author: string | null; body: string; preview_text: string | null; first_image: string | null; media_urls: string | null; media_dimensions: string | null; preview_manifest: string | null; feed_playback: string | null;
 /**
@@ -700,6 +849,14 @@ export type MenuAction =
  */
 { kind: "run"; id: string } |
 /**
+ * `value` was chosen in the choice `id`.
+ */
+{ kind: "choose"; id: string; value: string } |
+/**
+ * The switch `id` was turned on or off.
+ */
+{ kind: "check"; id: string; checked: boolean } |
+/**
  * The widget `id` asks.
  */
 { kind: "widget"; id: string; action: MenuWidgetAction }
@@ -717,7 +874,11 @@ export type MenuAnswer = { kind: "done" } |
 /**
  * Why a typed collection name would be refused, or none.
  */
-{ kind: "name_refusal"; reason: string | null }
+{ kind: "name_refusal"; reason: string | null } |
+/**
+ * The choice was not carried out: why, in the words the menu shows.
+ */
+{ kind: "failed"; message: string }
 
 /**
  * A collection in a picker, with the count of its cards.
@@ -730,19 +891,38 @@ export type MenuCollection = { name: string; count: number }
  */
 export type MenuEntry =
 /**
- * A command: choosing it closes the menu.
+ * A command: choosing it closes the menu, unless it stays open.
  */
-{ kind: "item"; id: string; label: string; icon: MenuIcon | null; variant: MenuItemVariant; truncate: boolean } | { kind: "separator" } |
+{ kind: "item"; id: string; label: string; icon: MenuIcon | null; variant: MenuItemVariant; truncate: boolean; disabled: boolean; stays_open: boolean; plain: boolean; detail: string | null } |
+/**
+ * A choice of one value out of a few: a row for each, the chosen one
+ * ticked. Choosing applies at once.
+ */
+{ kind: "radio"; id: string; value: string; options: MenuOption[]; closes: boolean } |
+/**
+ * A switch, ticked while on. Switching applies at once and keeps the
+ * menu open.
+ */
+{ kind: "checkbox"; id: string; label: string; checked: boolean } | { kind: "separator" } |
+/**
+ * A group's caption, or the line that says what the menu acts on: the
+ * count of the selected elements.
+ */
+{ kind: "caption"; text: string } |
+/**
+ * A line of text with no action.
+ */
+{ kind: "note"; text: string; tone: MenuNoteTone } |
 /**
  * A row that opens a menu beside it. Its content holds no submenu
  * (МО15).
  */
-{ kind: "submenu"; id: string; label: string; icon: MenuIcon | null; content: MenuSpec } | { kind: "widget"; id: string; widget: MenuWidget }
+{ kind: "submenu"; id: string; label: string; icon: MenuIcon | null; plain: boolean; content: MenuSpec } | { kind: "widget"; id: string; widget: MenuWidget }
 
 /**
  * The icons a menu's row may carry: a closed set, drawn by the page.
  */
-export type MenuIcon = "plus" | "external" | "unlink" | "trash"
+export type MenuIcon = "plus" | "external" | "unlink" | "trash" | "pencil" | "folder"
 
 /**
  * How a command's row reads: an ordinary one, one that breaks a link and
@@ -751,10 +931,25 @@ export type MenuIcon = "plus" | "external" | "unlink" | "trash"
 export type MenuItemVariant = "default" | "detach" | "destructive"
 
 /**
- * What opened the menu: a button's plate, the menu below or above it and
- * flush with one of its edges, or the pointer of a right click.
+ * How a line of text with no action reads.
  */
-export type MenuOpener = { kind: "plate"; align: MenuAlign } | { kind: "point" }
+export type MenuNoteTone =
+/**
+ * Why something the menu shows could not be read.
+ */
+"error"
+
+/**
+ * What opened the menu: a button's plate, the menu below or above it and
+ * flush with one of its edges by the rule of `plate_align`, or the pointer
+ * of a right click. The place that opens a menu names no edge (МО7).
+ */
+export type MenuOpener = { kind: "plate" } | { kind: "point" }
+
+/**
+ * One value of a choice, and the words of its row.
+ */
+export type MenuOption = { value: string; label: string }
 
 /**
  * What a tab's closing of its menu came to.
@@ -937,6 +1132,20 @@ frame_at: number;
 measured: MenuPanelSize }
 
 /**
+ * A step of the panel's page with a menu, and the page as it was then.
+ */
+export type MenuPanelProgress = { source: string; menu: number; step: MenuPanelStep;
+/**
+ * The page's area then (`innerWidth`, `innerHeight`).
+ */
+area: MenuPanelSize;
+/**
+ * The page counted itself seen then (`document.visibilityState`):
+ * WebKit gives a page it counts hidden no frames.
+ */
+visible: boolean }
+
+/**
  * Why a menu does not open in the panel: the tab then opens it on its page.
  */
 export type MenuPanelRefusal = { kind: "not_ready" } | { kind: "app_inactive" } | { kind: "not_a_source" } | { kind: "no_geometry" } | { kind: "bad_menu" } | { kind: "not_main_thread" } | { kind: "show_failed" } | { kind: "superseded" }
@@ -957,6 +1166,31 @@ export type MenuPanelSourceMessage = { menu: number; seq: number; body: MenuPane
  * then a menu opens on its page.
  */
 export type MenuPanelStatus = { ready: boolean }
+
+/**
+ * How far the panel's page got with the menu it was told to draw: the
+ * steps before its first frame (SPEC_MENU_WINDOW.md, МО40а). The first
+ * frame itself is the paint report.
+ */
+export type MenuPanelStep =
+/**
+ * The page heard the opening.
+ */
+"received" |
+/**
+ * The page's area changed while it waited for the frame's size, to
+ * another size.
+ */
+"resized" |
+/**
+ * The page's area took the frame's size it waited for (МО30).
+ */
+"sized" |
+/**
+ * React drew the menu into the page, and the page asked for its first
+ * frame.
+ */
+"frame_requested"
 
 /**
  * What the panel's page hears of a menu.
@@ -999,6 +1233,12 @@ export type MenuPanelToSource =
 export type MenuSide = "top" | "bottom" | "left" | "right"
 
 /**
+ * A space in the list of spaces: its folder, its name, and whether it can
+ * open in a new tab (it has an identity; a space never opened has none).
+ */
+export type MenuSpace = { path: string; name: string; tab: boolean }
+
+/**
  * A menu as data: what the page draws.
  */
 export type MenuSpec = { role: MenuWidthRole; entries: MenuEntry[] }
@@ -1013,7 +1253,25 @@ export type MenuWidget =
  * The collections of one card: a search field, every collection of the
  * space with the card's own ticked, a row to create one.
  */
-{ kind: "collection_picker"; card: string; selected: string[]; collections: MenuCollection[]; current: string | null }
+{ kind: "collection_picker"; card: string; selected: string[]; collections: MenuCollection[]; current: string | null } |
+/**
+ * The collections of a selection of cards: the same list, a collection
+ * ticked when every card of the selection is in it.
+ */
+{ kind: "batch_collection_picker"; cards: string[]; in_all: string[]; collections: MenuCollection[] } |
+/**
+ * Where a new card goes: a search field, a row for no collection, every
+ * collection of the space, a row to create one. A choice creates the
+ * card; what the card is made of, the page the menu came from knows.
+ */
+{ kind: "new_card_picker"; collections: string[]; current: string | null } |
+/**
+ * The spaces one may go to: a search field, the spaces in the order set
+ * in the settings, each with its actions beside it, the spaces whose
+ * folder is not there, and under a line the two actions of the space on
+ * screen.
+ */
+{ kind: "space_list"; spaces: MenuSpace[]; unavailable: MenuSpace[]; tabs: boolean }
 
 /**
  * What a widget asks of the page its menu came from.
@@ -1025,14 +1283,50 @@ export type MenuWidgetAction =
  */
 { kind: "toggle_collection"; collection: string; connected: boolean } |
 /**
- * Create the collection `name` and connect the card to it.
+ * Connect every card of the selection to `collection`, or disconnect
+ * them all when `connected` is false. Answered with
+ * `MenuAnswer::Membership`.
+ */
+{ kind: "connect_cards"; collection: string; connected: boolean } |
+/**
+ * Create the collection `name` and connect the card, or the selection's
+ * cards, to it.
  */
 { kind: "create_collection"; name: string } |
 /**
  * Why `name` would be refused as a new collection's. Answered with
  * `MenuAnswer::NameRefusal`.
  */
-{ kind: "check_collection_name"; name: string }
+{ kind: "check_collection_name"; name: string } |
+/**
+ * Create the new card in `collection`, or in none; `new_collection`
+ * says the collection is created first. Answered with
+ * `MenuAnswer::Done`, or with `MenuAnswer::Failed` and why.
+ */
+{ kind: "create_card"; collection: string | null; new_collection: boolean } |
+/**
+ * Go to the space at `path`: in this tab, or in a new one. Closes the
+ * menu.
+ */
+{ kind: "switch_space"; path: string; new_tab: boolean } |
+/**
+ * Show the folder of the space at `path` in Finder. The menu stays:
+ * several folders may be shown in a row.
+ */
+{ kind: "reveal_space"; path: string } |
+/**
+ * Ask to take the space at `path` off the list. Closes the menu: the
+ * question is a window of the page the menu came from.
+ */
+{ kind: "forget_space"; path: string } |
+/**
+ * Show the folder of the space on screen in Finder. Closes the menu.
+ */
+{ kind: "reveal_current_space" } |
+/**
+ * Ask for a folder to add as a space. Closes the menu.
+ */
+{ kind: "add_space" }
 
 /**
  * What sets a menu's width (МО5): a menu of commands, or a list under a
@@ -1312,6 +1606,118 @@ vault_id: string; file_names: string[] }
 export type OrphanMediaList = { vault_id: string; orphans: OrphanMedia[] }
 
 /**
+ * Why a showing ended here and not by its window.
+ */
+export type OutsideCloseReason =
+/**
+ * The source asked, or loaded anew.
+ */
+"source" |
+/**
+ * The app window moved, resized, went or entered or left full screen.
+ */
+"window" |
+/**
+ * The app was hidden, a window minimized, the space or the screens
+ * changed.
+ */
+"system" |
+/**
+ * The outside window's page drew nothing in time (НО9).
+ */
+"unresponsive" |
+/**
+ * Another showing began (НО5).
+ */
+"superseded"
+
+/**
+ * What the window shows over a collection's name (С7.12;
+ * `CollectionPreviewContent`).
+ */
+export type OutsideCollection = { row_key: string; name: string; count: number; cards: OutsideTile[]; placeholders: number }
+
+/**
+ * What the source's card needs that its page alone knows: the space, the
+ * sidebar's order of collections (`publishCollectionOrder`).
+ */
+export type OutsideLook = { vault_path: string; thumbs_root_path: string | null; collection_order: TagCount[] }
+
+/**
+ * What the backend tells the outside window's page.
+ */
+export type OutsidePageMessage =
+/**
+ * A showing begins: where on the page the window may stand.
+ */
+{ kind: "preview"; session: number; area: PageArea; look: OutsideLook } | { kind: "preview_step"; session: number; number: number; step: PreviewStep } |
+/**
+ * The showing ended here: the window goes at once.
+ */
+{ kind: "end"; session: number; reason: OutsideCloseReason } |
+/**
+ * A dragged card: its front card's top left on the page.
+ */
+{ kind: "drag"; session: number; at: ScreenPoint; stack: CardStack } |
+/**
+ * The drag is over: the card goes at once.
+ */
+{ kind: "drag_end"; session: number }
+
+/**
+ * What the outside window's page tells the backend.
+ */
+export type OutsidePageReport =
+/**
+ * The page listens: after its load, and after an `End` for being
+ * unresponsive, which it heard.
+ */
+{ kind: "ready" } |
+/**
+ * The window's state changed; numbered by the page within the session.
+ */
+{ kind: "preview"; session: number; number: number; report: PreviewReport } |
+/**
+ * The session's first frame with the window on screen.
+ */
+{ kind: "first_frame"; session: number } |
+/**
+ * The dragged card is drawn, its pictures in or out of time.
+ */
+{ kind: "drag_shown"; session: number }
+
+/**
+ * Why a showing does not go outside: the source draws it inside (НО9).
+ */
+export type OutsideRefusal = "not_ready" | "no_room" | "no_geometry" | "not_placed" | "superseded"
+
+/**
+ * What the backend tells a source page.
+ */
+export type OutsideSourceMessage = { kind: "preview"; show: number; number: number; report: PreviewReport } |
+/**
+ * The last word of a showing that ended here.
+ */
+{ kind: "closed"; show: number; reason: OutsideCloseReason }
+
+/**
+ * A tile of a collection's window: a card of the row's strip (`PreviewCard`).
+ */
+export type OutsideTile = { slug: string | null; url: string; text: boolean; has_thumb: boolean }
+
+/**
+ * Whether the outside window may be used: made, its page listening, found
+ * clear.
+ */
+export type OutsideWindowStatus = { ready: boolean }
+
+/**
+ * Where the window may stand on the outside window's page, from the page's
+ * top left: the column across, the bound down (`HoverPreviewArea`).
+ */
+export type PageArea = { left: number; top: number; right: number; bottom: number }
+
+/**
  * One file a browser may ask for, and how.
  */
 export type PageFile = { url: string;
@@ -1350,6 +1756,25 @@ export type PageFilesRequest = {
 document_url: string; body?: string | null; image_url?: string | null; video_posters?: VideoPosterRef[] | null }
 
 /**
+ * What the hover preview window holds (С7.11, С7.12).
+ */
+export type PreviewContent = { kind: "card"; block: LightBlock; thumb_version: number | null } | { kind: "collection"; collection: OutsideCollection }
+
+/**
+ * Why an offered card was not shown (`HoverPreviewDropReason`).
+ */
+export type PreviewDropReason = "left" | "unplaced-closed" | "unplaced-open"
+
+/**
+ * What happened to the window (`HoverPreviewStageHost`).
+ */
+export type PreviewEvent = { kind: "settled"; key: string } | { kind: "hidden" } | { kind: "dropped"; reason: PreviewDropReason } |
+/**
+ * The window that was on screen closed: the showing is over.
+ */
+{ kind: "closed" }
+
+/**
  * Sidebar preview: slug + whether it's a text-only thumbnail (for dark mode invert).
  */
 export type PreviewItem = { slug: string;
@@ -1372,6 +1797,68 @@ mtime: number;
  * the serde boundary via the struct default (snake_case in JSON).
  */
 has_thumb: boolean }
+
+/**
+ * A source opens a showing of the preview outside its app window.
+ */
+export type PreviewOpenRequest = {
+/**
+ * The source page's load: a page loaded anew counts from one again.
+ */
+page: string;
+/**
+ * The showing's number, the page's own count of them.
+ */
+show: number;
+/**
+ * The panel the window stands beside, in the page's points.
+ */
+panel: ScreenRect;
+/**
+ * The trigger of the first card, in the page's points.
+ */
+trigger: ScreenRect; side: PreviewSide; look: OutsideLook }
+
+/**
+ * The window's state, as the source's pointer reads it of its own window
+ * (`HoverPreviewStage`).
+ */
+export type PreviewPhase = "closed" | "open" | "leaving"
+
+/**
+ * The window's state after a change, and what changed it.
+ */
+export type PreviewReport = {
+/**
+ * The number of the last step the window had taken: the source reads
+ * the state only of a report that has taken every step it sent.
+ */
+applied: number; phase: PreviewPhase; shown_key: string | null; fading_key: string | null; pending_key: string | null; event: PreviewEvent | null }
+
+/**
+ * Which side of its panel the window would rather stand on: after the
+ * sidebar, before the open card's panel (С7.11, «Место»).
+ */
+export type PreviewSide = "after" | "before"
+
+/**
+ * What the source's pointer asks of the window (`HoverPreviewStage`).
+ */
+export type PreviewStep =
+/**
+ * `card` comes on for `key` once ready; the trigger in the page's points
+ * from the source, in the outside page's points to it.
+ */
+{ kind: "offer"; key: string; trigger: ScreenRect; content: PreviewContent } |
+/**
+ * The trigger the pointer is on now: a card ready for another is a flash.
+ */
+{ kind: "wanted"; key: string | null } | { kind: "drop_pending" } | { kind: "bring_back"; key: string; trigger: ScreenRect } | { kind: "fade_out" } | { kind: "close" }
+
+/**
+ * One numbered step of a showing.
+ */
+export type PreviewStepRequest = { page: string; show: number; number: number; step: PreviewStep }
 
 export type ProjectionRevision = number
 
@@ -1904,7 +2391,15 @@ export type UpdateStatus = { stage: UpdateStage; version: string | null; notes: 
  * `vault-changed`: the sources of the space at `path` changed. `renames`
  * lists what a command renamed; the watcher's news carries none.
  */
-export type VaultChangedPayload = { path: string; renames: SpaceRename[] }
+export type VaultChangedPayload = { path: string; renames: SpaceRename[];
+/**
+ * `blocks.id` of the cards a command changed, added or removed: a tab
+ * reads those rows instead of its whole feed. `None` when the cards are
+ * not known (the watcher, a sync pass, the settings window, a change of
+ * a collection's page): the tab reads its feed in full
+ * (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+ */
+cards: number[] | null }
 
 /**
  * A note in conflict, as the window shows it (ВК7).

@@ -489,18 +489,26 @@ impl SavedWindows {
     /// whether the window exists.
     pub fn add_tab(&mut self, window: &WindowId, tab: TabId, space: TabSpace, view: TabView) -> bool {
         let end = self.window(window).map_or(0, |target| target.tabs.len());
-        self.insert_tabs(window, end, vec![NewTab { id: tab, space, view }], 0)
+        self.insert_tabs(window, end, vec![NewTab { id: tab, space, view }], Some(0))
     }
 
     /// Put `tabs` into `window` from `index` on (clamped to the end), in
-    /// their order, and make `tabs[visible]` the visible one: cards dropped
-    /// on the tab bar (В86), a new tab at the end (В51). Every new tab opens
-    /// with the sidebar of the tab that was visible (В56). Returns whether
-    /// anything was added: the window exists, `tabs` is not empty and
-    /// `visible` names one of them.
-    pub fn insert_tabs(&mut self, window: &WindowId, index: usize, tabs: Vec<NewTab>, visible: usize) -> bool {
-        let Some(shown) = tabs.get(visible).map(|tab| tab.id.clone()) else {
+    /// their order, and make `tabs[visible]` the visible one, or keep the
+    /// visible tab with `None`: a new tab at the end shows (В51), cards
+    /// dropped on the tab bar do not (В86, decision of 16.11.2026). Every new
+    /// tab opens with the sidebar of the tab that was visible (В56). Returns
+    /// whether anything was added: the window exists, `tabs` is not empty
+    /// and `visible`, if given, names one of them.
+    pub fn insert_tabs(&mut self, window: &WindowId, index: usize, tabs: Vec<NewTab>, visible: Option<usize>) -> bool {
+        if tabs.is_empty() {
             return false;
+        }
+        let shown = match visible {
+            Some(visible) => match tabs.get(visible) {
+                Some(tab) => Some(tab.id.clone()),
+                None => return false,
+            },
+            None => None,
         };
         let Some(target) = self.window_mut(window) else {
             return false;
@@ -516,7 +524,9 @@ impl SavedWindows {
                 sidebar: Some(sidebar),
             }),
         );
-        target.active_tab = shown;
+        if let Some(shown) = shown {
+            target.active_tab = shown;
+        }
         true
     }
 
@@ -1532,19 +1542,20 @@ mod tests {
         }
     }
 
-    /// В86 (decision of 15.11.2026): cards dropped on the bar become tabs
-    /// from the slot on in the order given, the grabbed card's first and
-    /// visible, on the placeholder's slot; each takes the sidebar of the tab
-    /// the drag began in. А, Б, В in the feed's order, В grabbed: В, А, Б.
+    /// В86 (decisions of 15.11.2026 and 16.11.2026): cards dropped on the bar
+    /// become tabs from the slot on in the order given, the grabbed card's
+    /// first, on the placeholder's slot; the tab that was visible stays so;
+    /// each takes the sidebar of the visible tab. А, Б, В in the feed's
+    /// order, В grabbed: В, А, Б.
     #[test]
-    fn dropped_cards_become_tabs_at_the_slot_with_the_grabbed_one_first_and_shown() {
+    fn dropped_cards_become_tabs_at_the_slot_with_the_grabbed_one_first_and_the_visible_tab_kept() {
         let shown_sidebar = SidebarLayout { width_px: 300, collapsed: true };
         let mut model = saved(vec![window("w1", vec![tab("a", "x"), tab("b", "x"), tab("c", "x")], "b")]);
         model.windows[0].tabs[1].sidebar = Some(shown_sidebar);
         let tabs = vec![card_tab("v", "three"), card_tab("a1", "one"), card_tab("b1", "two")];
-        assert!(model.insert_tabs(&WindowId("w1".into()), 1, tabs, 0));
+        assert!(model.insert_tabs(&WindowId("w1".into()), 1, tabs, None));
         assert_eq!(order(&model), vec!["a", "v", "a1", "b1", "b", "c"]);
-        assert_eq!(model.windows[0].active_tab, TabId("v".into()));
+        assert_eq!(model.windows[0].active_tab, TabId("b".into()));
         for id in ["v", "a1", "b1"] {
             assert_eq!(model.windows[0].tab_sidebar(&TabId(id.into())), shown_sidebar);
         }
@@ -1557,20 +1568,23 @@ mod tests {
     #[test]
     fn dropped_cards_past_the_last_tab_go_to_the_end() {
         let mut model = saved(vec![window("w1", vec![tab("a", "x"), tab("b", "x")], "a")]);
-        assert!(model.insert_tabs(&WindowId("w1".into()), 9, vec![card_tab("n", "one")], 0));
+        assert!(model.insert_tabs(&WindowId("w1".into()), 9, vec![card_tab("n", "one")], None));
         assert_eq!(order(&model), vec!["a", "b", "n"]);
-        assert!(model.insert_tabs(&WindowId("w1".into()), 0, vec![card_tab("m", "two")], 0));
+        assert!(model.insert_tabs(&WindowId("w1".into()), 0, vec![card_tab("m", "two")], None));
         assert_eq!(order(&model), vec!["m", "a", "b", "n"]);
-        assert_eq!(model.windows[0].active_tab, TabId("m".into()));
+        assert_eq!(model.windows[0].active_tab, TabId("a".into()));
+        // A new tab at the end shows (В51).
+        assert!(model.insert_tabs(&WindowId("w1".into()), 9, vec![card_tab("t", "three")], Some(0)));
+        assert_eq!(model.windows[0].active_tab, TabId("t".into()));
     }
 
     #[test]
     fn nothing_is_added_without_a_window_tabs_or_a_tab_to_show() {
         let mut model = saved(vec![window("w1", vec![tab("a", "x")], "a")]);
         let before = model.clone();
-        assert!(!model.insert_tabs(&WindowId("gone".into()), 0, vec![card_tab("n", "one")], 0));
-        assert!(!model.insert_tabs(&WindowId("w1".into()), 0, Vec::new(), 0));
-        assert!(!model.insert_tabs(&WindowId("w1".into()), 0, vec![card_tab("n", "one")], 1));
+        assert!(!model.insert_tabs(&WindowId("gone".into()), 0, vec![card_tab("n", "one")], None));
+        assert!(!model.insert_tabs(&WindowId("w1".into()), 0, Vec::new(), None));
+        assert!(!model.insert_tabs(&WindowId("w1".into()), 0, vec![card_tab("n", "one")], Some(1)));
         assert_eq!(model, before);
     }
 

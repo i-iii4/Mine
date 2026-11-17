@@ -3308,7 +3308,7 @@ describe("Media Only: no lift, the buttons alone answer the pointer (SPEC_FEED_D
     expect(container.querySelector("[data-card-lift='tray'], [data-card-hover-bottom-actions]")).toBeNull();
     const buttons = container.querySelector("[data-card-hover-more-action]")!;
     expect(buttons).toHaveClass("group-hover:opacity-100", "opacity-0");
-    expect(within(buttons as HTMLElement).getByRole("button", { name: "Card actions", hidden: true })).toBeInTheDocument();
+    expect(within(buttons as HTMLElement).getByRole("button", { name: "Element actions", hidden: true })).toBeInTheDocument();
     expect(within(buttons as HTMLElement).queryByRole("button", { name: "Source", hidden: true }) !== null).toBe(value.url !== null);
     // Connect as a plus at the bottom right, on hover with the top buttons
     // (user's decision of 12.11.2026).
@@ -3366,7 +3366,7 @@ describe("Media Only: no lift, the buttons alone answer the pointer (SPEC_FEED_D
 
   it("holds the top buttons while a menu the pointer opened is up, still without a lift", async () => {
     const { container } = inMediaOnly(picture());
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false, pointerType: "mouse" });
     await waitFor(() => expect(frameIn(container)).toHaveAttribute("data-card-buttons-pinned"));
     expect(frameIn(container)).not.toHaveAttribute("data-card-lift-pinned");
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");

@@ -1,5 +1,7 @@
 import type { LightBlock } from "@/types";
-import { createFontMetricsCacheIdentity, getFontHash } from "@/lib/fontMetrics";
+import { cardTextIdentity } from "@/lib/cardTextIdentity";
+import { getFontHash } from "@/lib/fontMetrics";
+import { listGrowth } from "./feedIndex";
 
 // Which cards of the feed wait for the widths of their words (SPEC_GRID.md,
 // «Кэш при карточке и продолжение раскладки»).
@@ -10,15 +12,9 @@ import { createFontMetricsCacheIdentity, getFontHash } from "@/lib/fontMetrics";
 // (`reconcileBlocks`), so what was decided for it stands. The whole list is
 // read only when cards left it or changed places, and under a new font.
 
-/// The text a card's widths were measured for, kept by the card's row.
-const cacheKeys = new WeakMap<LightBlock, { fontHash: string; cacheKey: string }>();
-
-function cacheKeyOf(block: LightBlock, fontHash: string): string {
-  const held = cacheKeys.get(block);
-  if (held && held.fontHash === fontHash) return held.cacheKey;
-  const { cacheKey } = createFontMetricsCacheIdentity(block);
-  cacheKeys.set(block, { fontHash, cacheKey });
-  return cacheKey;
+/// The text a card's widths are measured for, kept by the card's row.
+function cacheKeyOf(block: LightBlock): string {
+  return cardTextIdentity(block).cacheKey;
 }
 
 /// What the feed knows of its cards' word widths between two lists.
@@ -56,28 +52,21 @@ function planGrownList(
   fontHash: string,
   dropped: number[],
 ): number[] | null {
-  const previous = ledger.blocks;
-  if (ledger.fontHash !== fontHash || blocks.length < previous.length) return null;
-  const fresh: number[] = [];
-  for (let index = 0; index < previous.length; index += 1) {
-    const was = previous[index]!;
-    const now = blocks[index]!;
-    if (was === now) continue;
-    if (was.id !== now.id) return null;
-    fresh.push(index);
-  }
-  for (let index = previous.length; index < blocks.length; index += 1) fresh.push(index);
+  const growth = ledger.fontHash === fontHash ? listGrowth(ledger.blocks, blocks) : null;
+  if (growth === null) return null;
+  const fresh = growth.replaced;
+  for (let index = growth.from; index < blocks.length; index += 1) fresh.push(index);
 
   const replaced = new Set(fresh);
   const waiting = ledger.waiting.filter((index) => {
     if (replaced.has(index)) return false;
     const block = blocks[index]!;
-    return ledger.recorded.get(block.id) !== cacheKeyOf(block, fontHash);
+    return ledger.recorded.get(block.id) !== cacheKeyOf(block);
   });
   for (const index of fresh) {
     const block = blocks[index]!;
     const held = ledger.recorded.get(block.id);
-    if (held === cacheKeyOf(block, fontHash)) continue;
+    if (held === cacheKeyOf(block)) continue;
     if (held !== undefined) {
       ledger.recorded.delete(block.id);
       dropped.push(block.id);
@@ -91,13 +80,12 @@ function planGrownList(
 function planWholeList(
   ledger: WordMetricsLedger,
   blocks: readonly LightBlock[],
-  fontHash: string,
   dropped: number[],
 ): number[] {
   const waiting: number[] = [];
   const current = new Map<number, string>();
   blocks.forEach((block, index) => {
-    const cacheKey = cacheKeyOf(block, fontHash);
+    const cacheKey = cacheKeyOf(block);
     current.set(block.id, cacheKey);
     if (ledger.recorded.get(block.id) !== cacheKey) waiting.push(index);
   });
@@ -119,14 +107,14 @@ export function planWordMetrics(
   const fontHash = getFontHash();
   const dropped: number[] = [];
   const waiting = planGrownList(ledger, blocks, fontHash, dropped)
-    ?? planWholeList(ledger, blocks, fontHash, dropped);
+    ?? planWholeList(ledger, blocks, dropped);
   ledger.blocks = blocks;
   ledger.fontHash = fontHash;
   ledger.waiting = waiting;
   const needsCompute = waiting.map((index) => blocks[index]!);
   return {
     needsCompute,
-    cacheKeys: new Map(needsCompute.map((block) => [block.id, cacheKeyOf(block, fontHash)])),
+    cacheKeys: new Map(needsCompute.map((block) => [block.id, cacheKeyOf(block)])),
     dropped,
   };
 }

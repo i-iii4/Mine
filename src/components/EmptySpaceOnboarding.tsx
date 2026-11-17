@@ -48,7 +48,7 @@ export function EmptySpaceOnboarding({
   const [failure, setFailure] = useState<string | null>(null);
   return (
     <div
-      className="grid place-items-center px-[var(--edge-rhythm,32px)]"
+      className="grid place-items-center px-[var(--shell-rhythm)]"
       style={{ minHeight: Math.max(320, viewportHeight) }}
       data-empty-space-onboarding=""
     >

@@ -584,7 +584,7 @@ async function tables(label, theme) {
   // to the menu's button as that key will.
   await cell(0, 1, 0, 0);
   const rowsBefore = original.split('\n').length;
-  await page.evaluate(() => document.querySelector('button[aria-label="Card actions"]').focus());
+  await page.evaluate(() => document.querySelector('button[aria-label="Element actions"]').focus());
   await page.keyboard.press('Enter');
   // The menu moves its focus a frame after a key: each step waits for it.
   const focused = async () => {

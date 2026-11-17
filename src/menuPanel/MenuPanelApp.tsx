@@ -26,13 +26,13 @@ import { MenuSpecView, menuSurfaceClass, type MenuDispatch } from "@/components/
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { logFailure } from "@/lib/appLog";
 import { commandById } from "@/lib/commandRegistry";
-import { MENU_SHADOW_FIELD_PX } from "@/lib/menuSpec";
-import { reportMenuPanelPainted, reportMenuPanelReady, requestOfMenuPanel } from "@/lib/menuPanelCommands";
+import { MENU_SHADOW_FIELD_PX, menuActionCloses } from "@/lib/menuSpec";
+import { reportMenuPanelPainted, reportMenuPanelProgress, reportMenuPanelReady, requestOfMenuPanel } from "@/lib/menuPanelCommands";
 import { MENU_PANEL_TO_PAGE_EVENT, MessageRow } from "@/lib/menuPanelProtocol";
 import { notePointerCommand, noteNativeMenuCommand } from "@/lib/motionInput";
 import { listenPage } from "@/lib/pageEvents";
 import { SETTINGS_CHANGED_EVENT, adoptSettingsChange, type SettingsChangedPayload } from "@/lib/settingsChanged";
-import type { MenuAction, MenuAnswer, MenuPanelCloseReason, MenuPanelLayout, MenuPanelPageMessage, MenuPanelSize, MenuPanelToPage, MenuSpec } from "@/types";
+import type { MenuAction, MenuAnswer, MenuPanelCloseReason, MenuPanelLayout, MenuPanelPageMessage, MenuPanelSize, MenuPanelStep, MenuPanelToPage, MenuSpec } from "@/types";
 import { applyMenuPanelAppearance, applyMenuPanelButtons } from "./appearance";
 
 const LOG = "Menu panel";
@@ -61,6 +61,19 @@ function afterTwoFrames(run: () => void): void {
   requestAnimationFrame(() => requestAnimationFrame(run));
 }
 
+/** Tell the backend a step of the menu `name` before its first frame, with
+ *  the page as it is now: a menu that draws nothing in time is logged with
+ *  the last step its page reached (SPEC_MENU_WINDOW.md, МО40а). */
+function progress(name: MenuName, step: MenuPanelStep): void {
+  void reportMenuPanelProgress({
+    source: name.source,
+    menu: name.menu,
+    step,
+    area: { width: window.innerWidth, height: window.innerHeight },
+    visible: document.visibilityState === "visible",
+  }).catch((error: unknown) => logFailure(`${LOG}: the step ${step} of menu ${name.menu} of ${name.source} did not reach the backend`, error));
+}
+
 /** Whether this page's area is the frame the backend set for a menu. */
 function areaIs(frame: MenuPanelSize): boolean {
   return Math.abs(window.innerWidth - frame.width) < 1 && Math.abs(window.innerHeight - frame.height) < 1;
@@ -86,7 +99,7 @@ export function MenuPanelApp() {
   const rowsRef = useRef(new Map<string, MessageRow<MenuPanelToPage>>());
   // A menu whose frame this page's area has not taken yet: it is drawn when
   // the area changes to it (МО30).
-  const awaitingFrameRef = useRef<{ frame: MenuPanelSize; draw: () => void } | null>(null);
+  const awaitingFrameRef = useRef<{ name: MenuName; frame: MenuPanelSize; draw: () => void } | null>(null);
 
   /** Ask the backend of `name`: a choice for the page the menu came from,
    *  the menu's closing, or both, the choice first. */
@@ -104,14 +117,20 @@ export function MenuPanelApp() {
   }, []);
 
   /** Send a choice to the page the menu came from; its answer, or null when
-   *  the menu closes first. The choice of an item closes the menu: one
-   *  request carries both, and the page hears the choice, then the closing
-   *  (SPEC_MENU_WINDOW.md, МО24). */
+   *  the menu closes first. A choice that closes the menu, a command's
+   *  unless its row keeps the menu open, is one request that carries both:
+   *  the page hears the choice, then the closing (SPEC_MENU_WINDOW.md,
+   *  МО24). */
   const ask = useCallback<MenuDispatch>((action) => {
     const current = drawnRef.current;
     if (current === null || overRef.current) return Promise.resolve(null);
-    const closes = action.kind === "run";
-    if (closes) closeReasonRef.current = "chosen";
+    const closes = menuActionCloses(current.spec, action);
+    if (closes) {
+      closeReasonRef.current = "chosen";
+      // A menu's own row closes its menu as it is chosen; what a widget
+      // asks does not, so the menu goes here.
+      if (action.kind === "widget") setOpen(false);
+    }
     return new Promise((resolve) => {
       const number = request(current, action, closes ? "chosen" : null);
       pendingRef.current.set(number, resolve);
@@ -157,11 +176,15 @@ export function MenuPanelApp() {
     }
     // A key opened it: the first row takes the highlight, as Radix gives it
     // on the page when a key opens a menu. Radix has focused the menu by now:
-    // the effects of a synchronous render ran with it.
-    if (opening.by_key) surface.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+    // the effects of a synchronous render ran with it. A list under a search
+    // field keeps the keyboard in its field.
+    if (opening.by_key && opening.spec.role !== "search") {
+      surface.querySelector<HTMLElement>('[role^="menuitem"]')?.focus({ preventScroll: true });
+    }
     // The layout's own measure, against the size the other page counted: the
     // backend logs both.
     const measured = { width: surface.offsetWidth, height: surface.offsetHeight };
+    progress(name, "frame_requested");
     requestAnimationFrame((frame) => {
       void reportMenuPanelPainted({
         source: name.source,
@@ -171,7 +194,7 @@ export function MenuPanelApp() {
         drawn_at: drawnAt,
         frame_at: performance.timeOrigin + frame,
         measured,
-      }).catch(() => undefined);
+      }).catch((error: unknown) => logFailure(`${LOG}: the first frame's report did not reach the backend`, error));
     });
   }, [request]);
 
@@ -180,6 +203,7 @@ export function MenuPanelApp() {
    *  for the first frame does (МО40). */
   const showOpening = useCallback((name: MenuName, opening: Opening) => {
     const receivedAt = now();
+    progress(name, "received");
     dropPending();
     requestRef.current = 0;
     overRef.current = false;
@@ -193,7 +217,7 @@ export function MenuPanelApp() {
       }
     };
     if (areaIs(opening.layout.frame)) drawNow();
-    else awaitingFrameRef.current = { frame: opening.layout.frame, draw: drawNow };
+    else awaitingFrameRef.current = { name, frame: opening.layout.frame, draw: drawNow };
   }, [draw, dropPending, request]);
 
   /** One message of the backend's about the menu `name`, its turn come. */
@@ -252,8 +276,13 @@ export function MenuPanelApp() {
     // The page's area changed: a menu waiting for this frame is drawn.
     const resized = () => {
       const awaiting = awaitingFrameRef.current;
-      if (awaiting === null || !areaIs(awaiting.frame)) return;
+      if (awaiting === null) return;
+      if (!areaIs(awaiting.frame)) {
+        progress(awaiting.name, "resized");
+        return;
+      }
       awaitingFrameRef.current = null;
+      progress(awaiting.name, "sized");
       awaiting.draw();
     };
     // A failure while a menu is up gives the clicks back at once.

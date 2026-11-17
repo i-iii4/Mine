@@ -29,7 +29,7 @@ import type { PreviewCard, TagCount } from "@/types";
  *  (sidebarWidth.ts): the parts laid out by it take it from there. Wide
  *  enough for the table's rows with their thumbnail strips, which the drag's
  *  overlay carries: below the compact threshold the sidebar is the List,
- *  names alone, while the narrow table is postponed (compactStack.ts). */
+ *  names alone. */
 const AUDIT_SIDEBAR_WIDTH = "420px";
 writeSidebarWidth(AUDIT_SIDEBAR_WIDTH);
 

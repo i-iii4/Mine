@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
+import { takeOwnFeedChanges } from "./feedChanges";
 import {
+  addTag,
   checkCollectionName,
   createBlock,
   createMediaAssetCard,
@@ -100,9 +102,43 @@ describe("IPC command adapter", () => {
       file_path: "/tmp/example.png",
     };
 
+    mockInvoke.mockResolvedValueOnce({ value: { slug: "Example" }, cards: [7] });
     await createBlock(params);
 
     expect(mockInvoke).toHaveBeenCalledWith("create_block", { params });
+  });
+
+  // SPEC_FRONTEND.md, «Обновление ленты»: a command that changes a space
+  // answers with its value and the cards it changed. The caller gets the
+  // value, as before; the cards go to the page's journal.
+  it("hands a changing command's value to the caller and its cards to the journal", async () => {
+    takeOwnFeedChanges();
+    mockInvoke.mockResolvedValueOnce({ value: { slug: "Example" }, cards: [7, 9] });
+    mockInvoke.mockResolvedValueOnce({ value: null, cards: [9, 12] });
+
+    await expect(createBlock({ block_type: "article", title: null, url: null, tags: [], file_path: null }))
+      .resolves.toEqual({ slug: "Example" });
+    await expect(addTag("Example", "Inbox")).resolves.toBeUndefined();
+
+    expect(takeOwnFeedChanges()).toEqual({ cards: [7, 9, 12], unknown: false });
+  });
+
+  it("says the cards are not known when a changing command named none or failed", async () => {
+    takeOwnFeedChanges();
+    mockInvoke.mockResolvedValueOnce({ value: { tag: "Renamed" }, cards: null });
+    await renameChannel("Old", "Renamed");
+    expect(takeOwnFeedChanges()).toEqual({ cards: [], unknown: true });
+
+    mockInvoke.mockRejectedValueOnce({ kind: "internal", message: "the note could not be written" });
+    await expect(addTag("Example", "Inbox")).rejects.toThrow("the note could not be written");
+    expect(takeOwnFeedChanges()).toEqual({ cards: [], unknown: true });
+  });
+
+  it("leaves the journal alone for a command that only reads", async () => {
+    takeOwnFeedChanges();
+    mockInvoke.mockResolvedValueOnce("/vault");
+    await getVaultPath();
+    expect(takeOwnFeedChanges()).toBeNull();
   });
 
   it("sends orphan batch commands through a typed request DTO bound to their space", async () => {

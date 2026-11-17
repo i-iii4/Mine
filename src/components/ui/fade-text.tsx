@@ -39,7 +39,19 @@ interface FadeTextProps extends Omit<HTMLAttributes<HTMLSpanElement>, "children"
 }
 
 /** One line of `text` as a flex item that may shrink: it clips what does not
- *  fit and dissolves it over the last 24px. */
+ *  fit and dissolves it over the last 24px.
+ *
+ *  Both the clip (`overflow: hidden`) and the mask stop at the element's own
+ *  box, across and down alike. A label of one line set tight (`leading-none`,
+ *  its box one em tall) would cut every glyph taller than its line: an
+ *  emoji of Apple Color Emoji stands 1em above its baseline and 0.25em below,
+ *  1.25em in all, and lost its top and bottom (16.11.2026; WebKit, SF Mono,
+ *  the baseline 0.877em down the box: 0.125em cut on each side; the
+ *  descender of «g» and the breve of «Й» too). The box holds a quarter em
+ *  more above and below, which keeps a 1.25em glyph
+ *  whole wherever the font puts the baseline in the lower quarter of the
+ *  line; the negative margin takes the same room back, so the label stands
+ *  where it stood and is as tall to its row. */
 export function FadeText({ text, className, ...props }: FadeTextProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const overflow = useTextOverflow(ref, text);
@@ -48,7 +60,7 @@ export function FadeText({ text, className, ...props }: FadeTextProps) {
       ref={ref}
       data-fade-text=""
       data-overflow={overflow ? "true" : undefined}
-      className={cn("min-w-0 overflow-hidden whitespace-nowrap", className)}
+      className={cn("min-w-0 overflow-hidden whitespace-nowrap py-[0.25em] -my-[0.25em]", className)}
       {...props}
     >
       {text}

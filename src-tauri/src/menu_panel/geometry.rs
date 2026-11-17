@@ -4,9 +4,10 @@
 //! The rules are a desktop app's, not a page's (AUDIT_MENU_PLACEMENT.md). The
 //! bound is the screen the anchor lies on, less the Dock, the menu bar and
 //! the camera's notch (МО1), with no field off its edges (МО2); the app's
-//! window takes no part. A menu of a button opens below its plate, flush with
-//! one of the plate's edges, and above only when it does not fit below (МО6
-//! to МО8). A right click's menu stands with its corner on the point, moves
+//! window takes no part. A menu of a button opens right and down: below its
+//! plate, its left edge on the plate's left; it turns to stand on the
+//! plate's right edge where the bound's right edge leaves no room, and opens
+//! above only when it does not fit below (МО6 to МО8). A right click's menu stands with its corner on the point, moves
 //! up at the bound's bottom and turns left at its right edge (МО10 to МО12).
 //! A submenu opens right of its row, left where the right has no room (МО13).
 //!
@@ -85,7 +86,7 @@ pub fn screen_bound(frame: ScreenRect, visible: ScreenRect, insets: SafeInsets) 
 }
 
 /// A size in points.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, specta::Type)]
 pub struct MenuPanelSize {
     pub width: f64,
     pub height: f64,
@@ -118,11 +119,12 @@ pub enum MenuSide {
 }
 
 /// What opened the menu: a button's plate, the menu below or above it and
-/// flush with one of its edges, or the pointer of a right click.
+/// flush with one of its edges by the rule of `plate_align`, or the pointer
+/// of a right click. The place that opens a menu names no edge (МО7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MenuOpener {
-    Plate { align: MenuAlign },
+    Plate,
     Point,
 }
 
@@ -180,12 +182,29 @@ fn positive(value: f64) -> f64 {
     value.max(0.0)
 }
 
+/// The edge of its plate a button's menu `width` wide stands flush with
+/// (МО7): the start, its left edge on the plate's left, so it opens right;
+/// the end, its right edge on the plate's right, where the bound's right
+/// edge leaves no room and its left edge does; with room on neither side
+/// the start, and the menu shifts inside the bound (МО8). The menu on a
+/// page keeps the same rule (src/lib/floatingLayer.ts, `plateMenuAlign`).
+fn plate_align(plate_x: f64, plate_width: f64, width: f64, left: f64, right: f64) -> MenuAlign {
+    if plate_x + width <= right {
+        MenuAlign::Start
+    } else if plate_x + plate_width - width >= left {
+        MenuAlign::End
+    } else {
+        MenuAlign::Start
+    }
+}
+
 /// The menu of `size` on the bound `screen` for `opener` at `anchor` (the
 /// plate, or the point as a rectangle of no size).
 fn place_menu(opener: MenuOpener, anchor: ScreenRect, size: MenuPanelSize, screen: ScreenRect) -> (ScreenRect, MenuSide, MenuAlign, Option<f64>) {
     let bounds = bounds_of(screen);
     match opener {
-        MenuOpener::Plate { align } => {
+        MenuOpener::Plate => {
+            let align = plate_align(anchor.x, anchor.width, size.width, bounds.left, bounds.right);
             let wanted_x = match align {
                 MenuAlign::End => anchor.x + anchor.width - size.width,
                 MenuAlign::Start => anchor.x,
@@ -322,7 +341,7 @@ mod tests {
     // A 1440 × 900 screen whose visible frame starts under a 25 pt menu bar.
     const SCREEN: ScreenRect = ScreenRect { x: 0.0, y: 25.0, width: 1440.0, height: 875.0 };
     const MENU: MenuPanelSize = MenuPanelSize { width: 240.0, height: 300.0 };
-    const END: MenuOpener = MenuOpener::Plate { align: MenuAlign::End };
+    const PLATE: MenuOpener = MenuOpener::Plate;
     /// Connect's picker, off the menu's first row: a list under a search
     /// field at its tallest.
     const PICKER: SubmenuSize = SubmenuSize { row_top: 5.0, width: 300.0, height: 303.0 };
@@ -342,7 +361,7 @@ mod tests {
 
     #[test]
     fn the_frame_is_the_menu_and_its_submenu_with_the_shadows_field() {
-        let laid = layout(END, plate(700.0, 200.0), MENU, SCREEN);
+        let laid = layout(PLATE, plate(700.0, 200.0), MENU, SCREEN);
         // Across: the menu, the picker beside it, the field on both sides.
         // Down: the picker starts 5 below the menu's top and ends 8 below
         // its bottom.
@@ -352,19 +371,19 @@ mod tests {
 
     #[test]
     fn a_menu_with_no_submenu_has_a_frame_of_its_own_size_and_the_field() {
-        let laid = super::layout(END, plate(700.0, 200.0), MENU, &[], SCREEN);
+        let laid = super::layout(PLATE, plate(700.0, 200.0), MENU, &[], SCREEN);
         assert_eq!(laid.frame, MenuPanelSize { width: 264.0, height: 324.0 });
         assert_eq!(laid.origin, ScreenPoint { x: laid.menu.x - 12.0, y: laid.menu.y - 12.0 });
         assert!(laid.submenu_right);
         // At the screen's right edge too: nothing is kept for a submenu.
-        let edge = super::layout(END, plate(1416.0, 200.0), MENU, &[], SCREEN);
+        let edge = super::layout(PLATE, plate(1416.0, 200.0), MENU, &[], SCREEN);
         assert_eq!((edge.menu.x, edge.frame.width, edge.submenu_right), (1200.0, 264.0, true));
     }
 
     #[test]
     fn the_frame_holds_the_widest_and_the_lowest_of_several_submenus() {
         let table = SubmenuSize { row_top: 37.0, width: 240.0, height: 400.0 };
-        let laid = super::layout(END, plate(700.0, 200.0), MENU, &[PICKER, table], SCREEN);
+        let laid = super::layout(PLATE, plate(700.0, 200.0), MENU, &[PICKER, table], SCREEN);
         assert_eq!(laid.frame, MenuPanelSize { width: 240.0 + 300.0 + 24.0, height: 37.0 + 400.0 + 24.0 });
     }
 
@@ -372,46 +391,63 @@ mod tests {
     fn a_submenu_taller_than_the_bound_takes_its_height() {
         let short = ScreenRect { x: 0.0, y: 0.0, width: 1440.0, height: 250.0 };
         let small = MenuPanelSize { width: 240.0, height: 100.0 };
-        let laid = super::layout(END, plate(700.0, 20.0), small, &[PICKER], short);
+        let laid = super::layout(PLATE, plate(700.0, 20.0), small, &[PICKER], short);
         // The picker from the bound's top to its bottom, Radix scrolls it.
         assert_eq!((laid.origin.y, laid.frame.height), (-12.0, 250.0 + 24.0));
     }
 
     #[test]
-    fn a_menu_stands_below_its_plate_flush_with_its_right_edge() {
-        let laid = layout(END, plate(700.0, 200.0), MENU, SCREEN);
-        assert_eq!(laid.side, MenuSide::Bottom);
-        assert_eq!(laid.menu, ScreenRect { x: 724.0 - 240.0, y: 228.0, width: 240.0, height: 300.0 });
+    fn a_menu_opens_right_and_down_its_left_edge_on_its_plates() {
+        let laid = layout(PLATE, plate(700.0, 200.0), MENU, SCREEN);
+        assert_eq!((laid.side, laid.align), (MenuSide::Bottom, MenuAlign::Start));
+        assert_eq!(laid.menu, ScreenRect { x: 700.0, y: 228.0, width: 240.0, height: 300.0 });
         assert_eq!(laid.max_height, None);
+    }
+
+    #[test]
+    fn a_menu_turns_at_the_screens_right_edge_its_right_edge_on_its_plates() {
+        // It fits to the bound's right edge exactly (МО2), and turns one
+        // point on: the plate's right edge is 1225 (МО7).
+        let fits = layout(PLATE, plate(1200.0, 200.0), MENU, SCREEN);
+        assert_eq!((fits.align, fits.menu.x), (MenuAlign::Start, 1200.0));
+        let turned = layout(PLATE, plate(1201.0, 200.0), MENU, SCREEN);
+        assert_eq!((turned.align, turned.menu.x), (MenuAlign::End, 1225.0 - 240.0));
+        assert_eq!(turned.side, MenuSide::Bottom);
     }
 
     #[test]
     fn a_menu_flips_above_its_plate_at_the_screens_bottom() {
         // It fits below to the last point: no field off the bound (МО2).
         let y = SCREEN.y + SCREEN.height - 300.0 - PLATE_GAP_PX - 24.0;
-        assert_eq!(layout(END, plate(700.0, y), MENU, SCREEN).side, MenuSide::Bottom);
-        let flipped = layout(END, plate(700.0, y + 1.0), MENU, SCREEN);
+        assert_eq!(layout(PLATE, plate(700.0, y), MENU, SCREEN).side, MenuSide::Bottom);
+        let flipped = layout(PLATE, plate(700.0, y + 1.0), MENU, SCREEN);
         assert_eq!(flipped.side, MenuSide::Top);
         assert_eq!(flipped.menu.y + flipped.menu.height, y + 1.0 - PLATE_GAP_PX);
     }
 
     #[test]
     fn a_menu_shifts_off_the_screens_side_but_never_off_its_plate() {
-        assert_eq!(layout(END, plate(20.0, 200.0), MENU, SCREEN).menu.x, 0.0);
-        assert_eq!(layout(END, plate(-400.0, 200.0), MENU, SCREEN).menu.x, -376.0);
+        // With room on neither side it stands on the plate's left edge and
+        // shifts inside the bound, no farther than the plate (МО8).
+        let narrow = ScreenRect { x: 0.0, y: 0.0, width: 250.0, height: 900.0 };
+        let neither = layout(PLATE, plate(100.0, 200.0), MENU, narrow);
+        assert_eq!((neither.align, neither.menu.x), (MenuAlign::Start, 10.0));
+        assert_eq!(layout(PLATE, plate(-400.0, 200.0), MENU, SCREEN).menu.x, -376.0);
+        // A second screen right of the main one, its right edge at 3360; the
+        // plate reaches past it: the menu turns and shifts inside the bound.
         let second = ScreenRect { x: 1440.0, y: 0.0, width: 1920.0, height: 1080.0 };
-        let start = MenuOpener::Plate { align: MenuAlign::Start };
-        assert_eq!(layout(start, plate(3350.0, 300.0), MENU, second).menu.x, 3360.0 - 240.0);
+        let past = layout(PLATE, plate(3350.0, 300.0), MENU, second);
+        assert_eq!((past.align, past.menu.x), (MenuAlign::End, 3360.0 - 240.0));
         // A screen left of the main one: its points are negative (МО3).
         let left = ScreenRect { x: -1920.0, y: 0.0, width: 1920.0, height: 1080.0 };
-        assert_eq!(layout(start, plate(-100.0, 300.0), MENU, left).menu.x, -240.0);
-        assert_eq!(layout(END, plate(-1910.0, 300.0), MENU, left).menu.x, -1920.0);
+        assert_eq!(layout(PLATE, plate(-100.0, 300.0), MENU, left).menu.x, -76.0 - 240.0);
+        assert_eq!(layout(PLATE, plate(-1910.0, 300.0), MENU, left).menu.x, -1910.0);
     }
 
     #[test]
     fn with_room_on_neither_side_the_menu_takes_the_lesser_overflow_and_its_room() {
         let short = ScreenRect { x: 0.0, y: 0.0, width: 800.0, height: 400.0 };
-        let laid = layout(END, plate(400.0, 150.0), MENU, short);
+        let laid = layout(PLATE, plate(400.0, 150.0), MENU, short);
         assert_eq!(laid.side, MenuSide::Bottom);
         assert_eq!(laid.max_height, Some(400.0 - 178.0));
     }
@@ -474,8 +510,8 @@ mod tests {
 
     #[test]
     fn the_submenu_opens_where_the_screen_has_room() {
-        assert!(layout(END, plate(700.0, 200.0), MENU, SCREEN).submenu_right);
-        let left = layout(END, plate(1200.0, 200.0), MENU, SCREEN);
+        assert!(layout(PLATE, plate(700.0, 200.0), MENU, SCREEN).submenu_right);
+        let left = layout(PLATE, plate(1200.0, 200.0), MENU, SCREEN);
         assert!(!left.submenu_right);
         // The frame's right edge the field off the menu: Radix flips left.
         assert_eq!(left.origin.x + left.frame.width, left.menu.x + left.menu.width + SHADOW_FIELD_PX);
@@ -498,7 +534,7 @@ mod tests {
         for height in [120.0, 300.0, 400.0] {
             for y in [30.0, 300.0, 600.0, 880.0] {
                 for x in [0.0, 500.0, 1430.0] {
-                    for opener in [MenuOpener::Point, END] {
+                    for opener in [MenuOpener::Point, PLATE] {
                         let anchor = if opener == MenuOpener::Point { point(x, y) } else { plate(x, y) };
                         let laid = layout(opener, anchor, MenuPanelSize { width: 240.0, height }, SCREEN);
                         let (menu, origin) = (laid.menu, laid.origin);
@@ -514,9 +550,13 @@ mod tests {
 
     #[test]
     fn the_anchor_stands_the_plate_gap_off_the_edge_the_menu_came_out_of() {
-        let laid = layout(END, plate(700.0, 200.0), MENU, SCREEN);
+        let laid = layout(PLATE, plate(700.0, 200.0), MENU, SCREEN);
         let local = ScreenPoint { x: laid.menu.x - laid.origin.x, y: laid.menu.y - laid.origin.y };
-        assert_eq!(laid.anchor, ScreenPoint { x: local.x + 240.0, y: local.y - PLATE_GAP_PX });
+        assert_eq!(laid.anchor, ScreenPoint { x: local.x, y: local.y - PLATE_GAP_PX });
+        // A menu turned at the screen's right edge grows from its right.
+        let turned = super::layout(PLATE, plate(1416.0, 200.0), MENU, &[], SCREEN);
+        let local = ScreenPoint { x: turned.menu.x - turned.origin.x, y: turned.menu.y - turned.origin.y };
+        assert_eq!(turned.anchor, ScreenPoint { x: local.x + 240.0, y: local.y - PLATE_GAP_PX });
         let right_click = layout(MenuOpener::Point, point(500.0, 300.0), MENU, SCREEN);
         assert_eq!(right_click.anchor.x, right_click.menu.x - right_click.origin.x - PLATE_GAP_PX);
     }

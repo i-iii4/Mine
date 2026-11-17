@@ -28,7 +28,7 @@ use crate::commands::settings::{
     DeleteOrphanResult, OrphanMedia, OrphanMediaBatchRequest, OrphanMediaList, PromoteOrphanResult,
     SpaceStats,
 };
-use crate::commands::effects::{RenamedKind, SpaceRename, VaultChangedPayload};
+use crate::commands::effects::{Changed, RenamedKind, SpaceRename, VaultChangedPayload};
 use crate::commands::spaces::SelectionStamp;
 use crate::commands::state::CommandError;
 use crate::commands::vault::SpaceMovedPayload;
@@ -36,7 +36,7 @@ use crate::domain::windows::{
     MainViewMode, OpenCard, ScrollAnchor, SidebarIntent, SidebarLayout, SidebarOverlay, TabId,
     TabLocation, TabSide, TabSpace, TabView, WindowId,
 };
-use crate::tabs::drag::{CardBarDrop, CardDragHover, DropHover, DropItem};
+use crate::tabs::drag::{CardDragBegin, CardDragDrop, CardDragUpdate, CardDragOver, CardTabsConfirm, DropHover, DropItem};
 use crate::tabs::{
     SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabFileDrag, TabHistory, TabHistoryStep, TabVisibility,
 };
@@ -59,7 +59,9 @@ use crate::storage::index::{
     FeedPreviewKind, FeedPreviewManifest, FeedPreviewTile, IndexedBlock, LightBlock, SearchMatch,
     SearchMatchField, SearchMatchKind, SearchTextRange, TagCount, ThumbFormat,
 };
-use crate::storage::projection::{GridSnapshot, GridRowsSnapshot, ProjectionRevision};
+use crate::storage::projection::{FeedPatch, GridSnapshot, ProjectionRevision};
+use crate::storage::block_queries::{FeedPageToken, FeedPatchRow};
+use crate::commands::feed_read_log::FeedReadReason;
 use crate::storage::search_projection::{SearchPageToken, SearchRevision, SearchSnapshot};
 use crate::storage::task_toggle::{TaskToggleError, ToggleTaskItemParams};
 use crate::storage::note_edit::{
@@ -73,12 +75,19 @@ use crate::menu_panel::geometry::{
     MenuAlign, MenuOpener, MenuPanelLayout, MenuPanelSize, MenuSide, ScreenPoint, ScreenRect, SubmenuSize,
 };
 use crate::menu_panel::spec::{
-    MenuAction, MenuAnswer, MenuCollection, MenuEntry, MenuIcon, MenuItemVariant, MenuSpec, MenuWidget,
-    MenuWidgetAction, MenuWidthRole,
+    MenuAction, MenuAnswer, MenuCollection, MenuEntry, MenuIcon, MenuItemVariant, MenuNoteTone, MenuOption, MenuSpace,
+    MenuSpec, MenuWidget, MenuWidgetAction, MenuWidthRole,
+};
+use crate::outside_window::geometry::{PageArea, PreviewSide};
+use crate::outside_window::{
+    CardDragViewShown, CardStack, OutsideCloseReason, OutsideCollection, OutsideLook, OutsidePageMessage, OutsidePageReport, OutsideRefusal,
+    OutsideSourceMessage, OutsideTile, OutsideWindowStatus, PreviewContent, PreviewDropReason, PreviewEvent,
+    PreviewOpenRequest, PreviewPhase, PreviewReport, PreviewStep, PreviewStepRequest,
 };
 use crate::menu_panel::{
     MenuPanelCloseOutcome, MenuPanelCloseReason, MenuPanelOpenRequest, MenuPanelPageMessage, MenuPanelPageRequest,
-    MenuPanelPaint, MenuPanelRefusal, MenuPanelSourceMessage, MenuPanelStatus, MenuPanelToPage, MenuPanelToSource,
+    MenuPanelPaint, MenuPanelProgress, MenuPanelRefusal, MenuPanelSourceMessage, MenuPanelStatus, MenuPanelStep,
+    MenuPanelToPage, MenuPanelToSource,
 };
 
 pub fn export_types(check_only: bool) -> Result<()> {
@@ -121,8 +130,11 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<SpaceMovedPayload>()
         .register::<DropHover>()
         .register::<DropItem>()
-        .register::<CardDragHover>()
-        .register::<CardBarDrop>()
+        .register::<CardDragBegin>()
+        .register::<CardDragUpdate>()
+        .register::<CardDragOver>()
+        .register::<CardDragDrop>()
+        .register::<CardTabsConfirm>()
         .register::<TabSide>()
         .register::<ClipboardPayload>()
         .register::<ShortcutBinding>()
@@ -144,7 +156,11 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ThumbFormat>()
         .register::<GridSnapshot>()
         .register::<crate::storage::block_queries::FeedOrder>()
-        .register::<GridRowsSnapshot>()
+        .register::<FeedPatch>()
+        .register::<FeedPatchRow>()
+        .register::<FeedPageToken>()
+        .register::<FeedReadReason>()
+        .register::<Changed<()>>()
         .register::<crate::storage::card_associations::CardAssociationKind>()
         .register::<crate::storage::card_associations::CardAssociationGroup>()
         .register::<crate::storage::card_associations::CardAssociations>()
@@ -247,6 +263,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<MenuIcon>()
         .register::<MenuItemVariant>()
         .register::<MenuCollection>()
+        .register::<MenuNoteTone>()
+        .register::<MenuOption>()
+        .register::<MenuSpace>()
         .register::<MenuWidget>()
         .register::<MenuEntry>()
         .register::<MenuSpec>()
@@ -267,7 +286,30 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<MenuPanelLayout>()
         .register::<MenuPanelCloseReason>()
         .register::<MenuPanelPaint>()
-        .register::<MenuPanelRefusal>();
+        .register::<MenuPanelProgress>()
+        .register::<MenuPanelStep>()
+        .register::<MenuPanelRefusal>()
+        .register::<PageArea>()
+        .register::<PreviewSide>()
+        .register::<OutsideWindowStatus>()
+        .register::<OutsideLook>()
+        .register::<OutsideTile>()
+        .register::<OutsideCollection>()
+        .register::<PreviewContent>()
+        .register::<PreviewOpenRequest>()
+        .register::<OutsideRefusal>()
+        .register::<PreviewStep>()
+        .register::<PreviewStepRequest>()
+        .register::<PreviewPhase>()
+        .register::<PreviewDropReason>()
+        .register::<PreviewEvent>()
+        .register::<PreviewReport>()
+        .register::<OutsideCloseReason>()
+        .register::<OutsidePageMessage>()
+        .register::<OutsidePageReport>()
+        .register::<OutsideSourceMessage>()
+        .register::<CardStack>()
+        .register::<CardDragViewShown>();
 
     let output = Typescript::default()
         .bigint(BigIntExportBehavior::Number)

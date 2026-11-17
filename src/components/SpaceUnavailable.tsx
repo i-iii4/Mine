@@ -139,7 +139,7 @@ export function SpaceUnavailable({
     <div
       // Fills its container rather than the viewport: the app gives it the
       // whole window, the design-system showcase gives it a box.
-      className="flex size-full min-h-80 items-center justify-center bg-background px-[var(--edge-rhythm,32px)]"
+      className="flex size-full min-h-80 items-center justify-center bg-background px-[var(--shell-rhythm)]"
       data-space-unavailable=""
     >
       {/* The column is as wide as a dialog (ScreenState), so each variant's

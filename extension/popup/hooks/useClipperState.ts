@@ -560,7 +560,7 @@ export function useClipperState() {
       if (result.ok && Array.isArray(result.channels)) {
         setChannels(result.channels);
         if ("indexing" in result && result.indexing === true) {
-          setChannelsNotice("Mine is indexing this space. Card counts will appear shortly.");
+          setChannelsNotice("Mine is indexing this space. Element counts will appear shortly.");
           channelsRecheckRef.current = setTimeout(() => {
             channelsRecheckRef.current = null;
             void refreshChannelsRef.current(vaultPath, true);

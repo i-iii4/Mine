@@ -1066,18 +1066,18 @@ mod tests {
         Card::new("Cards/Piece").from("Two").at("2026-01-03T00:00:00Z").write(&conn);
         Card::new("Cards/Other").author("@other").write(&conn);
         let location = TabLocation::Author { author: "@KOTECINHO".into() };
-        let slugs = |order, offset, limit| {
+        let slugs = |order, limit| {
             let (blocks, has_more) =
-                list_grid_blocks_in_order(&conn, &location, offset, limit, order).unwrap();
+                list_grid_blocks_in_order(&conn, &location, None, limit, order).unwrap();
             (blocks.into_iter().map(|block| block.slug).collect::<Vec<_>>(), has_more)
         };
-        assert_eq!(slugs(FeedOrder::Newest, 0, 10).0, ["Cards/Piece", "Cards/Two", "Cards/One"]);
+        assert_eq!(slugs(FeedOrder::Newest, 10).0, ["Cards/Piece", "Cards/Two", "Cards/One"]);
         assert_eq!(
-            slugs(FeedOrder::Oldest, 0, 2),
+            slugs(FeedOrder::Oldest, 2),
             (vec!["Cards/One".to_string(), "Cards/Two".to_string()], true)
         );
         let empty = TabLocation::Author { author: "  ".into() };
-        assert!(list_grid_blocks_in_order(&conn, &empty, 0, 10, FeedOrder::Newest)
+        assert!(list_grid_blocks_in_order(&conn, &empty, None, 10, FeedOrder::Newest)
             .unwrap()
             .0
             .is_empty());
@@ -1101,23 +1101,27 @@ mod tests {
                 .unwrap()
                 .join("\n")
         };
+        // The author's feed reads through the index of its own order
+        // (SPEC_STORAGE.md, «Страница ленты по ключу»).
         let feed = plan(&author_feed_sql(FeedOrder::Newest));
-        assert!(feed.contains("idx_blocks_association_author"), "{feed}");
+        assert!(feed.contains("idx_blocks_author_feed_newest"), "{feed}");
 
         let rule = |kind, value: &str| GroupRule { kind, label: value.into(), value: value.into() };
         let cases = [
             (rule(CardAssociationKind::Address, "x"), vec![], "idx_blocks_association_address"),
+            // An author's group is his cards in the feed's order: the index
+            // of the author's feed holds exactly that.
             (
                 rule(CardAssociationKind::Author, "x"),
                 vec![rule(CardAssociationKind::Address, "y")],
-                "idx_blocks_association_author",
+                "idx_blocks_author_feed_newest",
             ),
             (rule(CardAssociationKind::Site, "x"), vec![], "idx_blocks_association_site"),
         ];
         for (current, earlier, index) in cases {
             let (sql, _) = group_query(&current, &earlier, 1, "[]").unwrap();
             let group = plan(&sql);
-            assert!(group.contains(index), "{group}");
+            assert!(group.contains(index), "{index}: {group}");
             assert!(!group.lines().any(|line| line.trim() == "SCAN b"), "{group}");
         }
     }

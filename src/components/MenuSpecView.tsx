@@ -2,86 +2,50 @@
 // src-tauri/src/menu_panel/spec.rs; SPEC_MENU_WINDOW.md, МО16, МО23, МО27).
 //
 // A page describes its menu, and this draws the description's entries with
-// the menu primitives, inside a menu's surface: in the menu panel's page and
-// on the page the menu came from alike, so a menu looks and answers the same
+// the dropdown's primitives, inside a dropdown's surface (a menu a right
+// click opens is a dropdown off the point too, МО68): in the menu panel's
+// page and on the page the menu came from alike, so a menu looks and answers the same
 // in both. Every choice leaves as an action that names its entry
 // (`dispatch`): on the page it goes straight to the page's handlers, in the
 // panel through the backend to the same handlers. What lives only while the
 // menu is open stays here and in the widgets: which submenu is open, a
 // search field's query, the row under the pointer.
 //
-// The entries drawn are the ones the card menus hold; a menu with another
-// kind of entry brings the kind with it (SPEC_MENU_WINDOW.md, section 14).
+// The entries drawn are the ones the menus moved into the panel hold: a
+// card's, a selection's, those of an open card's content and the chrome's;
+// a menu with another kind of entry brings the kind with it
+// (SPEC_MENU_WINDOW.md, section 14).
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { ExternalLink, Plus, Trash2, Unlink, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { ExternalLink, FolderOpen, Pencil, Plus, Trash2, Unlink, type LucideIcon } from "lucide-react";
 import {
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-} from "@/components/ui/context-menu";
-import {
+  DropdownMenuCheckboxItem,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
-import type { FloatingMenuWidth } from "@/lib/floatingLayer";
-import type { MenuAction, MenuAnswer, MenuEntry, MenuIcon, MenuSpec, MenuWidget, MenuWidthRole } from "@/types";
-import { COLLECTION_PICKER_CONTENT_CLASS, CollectionPicker } from "./CollectionPicker";
+import type { MenuAction, MenuAnswer, MenuEntry, MenuIcon, MenuSpec, MenuWidget, MenuWidgetAction, MenuWidthRole } from "@/types";
+import { BatchCollectionPicker, COLLECTION_PICKER_CONTENT_CLASS, CollectionPicker } from "./CollectionPicker";
+import { NewCardCollectionPicker } from "./NewCardCollectionPicker";
+import { SpaceList } from "./SpaceList";
 
 /** Send a choice to the page the menu came from: its answer, or null when
  *  the menu closed before one came. */
 export type MenuDispatch = (action: MenuAction) => Promise<MenuAnswer | null>;
-
-/**
- * The primitives a menu's entries are made of. A menu on a page stands in a
- * dropdown's surface or in a context menu's, and a row of one has no menu
- * inside the other: React throws on it.
- */
-export interface MenuKit {
-  Item: ComponentType<{
-    variant?: "default" | "destructive" | "detach";
-    onSelect?: (event: Event) => void;
-    children?: ReactNode;
-  }>;
-  Separator: ComponentType;
-  Sub: ComponentType<{ open?: boolean; onOpenChange?: (open: boolean) => void; children?: ReactNode }>;
-  SubTrigger: ComponentType<{ ref?: Ref<HTMLDivElement>; children?: ReactNode }>;
-  SubContent: ComponentType<{
-    widthRole?: FloatingMenuWidth;
-    className?: string;
-    collisionPadding?: number;
-    onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
-    children?: ReactNode;
-  }>;
-}
-
-export const DROPDOWN_MENU_KIT: MenuKit = {
-  Item: DropdownMenuItem,
-  Separator: DropdownMenuSeparator,
-  Sub: DropdownMenuSub,
-  SubTrigger: DropdownMenuSubTrigger,
-  SubContent: DropdownMenuSubContent,
-};
-
-export const CONTEXT_MENU_KIT: MenuKit = {
-  Item: ContextMenuItem,
-  Separator: ContextMenuSeparator,
-  Sub: ContextMenuSub,
-  SubTrigger: ContextMenuSubTrigger,
-  SubContent: ContextMenuSubContent,
-};
 
 const MENU_ICONS: Record<MenuIcon, LucideIcon> = {
   plus: Plus,
   external: ExternalLink,
   unlink: Unlink,
   trash: Trash2,
+  pencil: Pencil,
+  folder: FolderOpen,
 };
 
 /**
@@ -153,15 +117,126 @@ function CollectionPickerView({
   );
 }
 
-function WidgetView({
+type BatchCollectionPickerWidget = Extract<MenuWidget, { kind: "batch_collection_picker" }>;
+
+/** The picker of a selection's collections. A collection is ticked when
+ *  every selected card is in it, which is all the description says: the
+ *  picker reads it as each card being in exactly those. */
+function BatchCollectionPickerView({
   id,
   widget,
   dispatch,
   onRequestClose,
 }: {
   id: string;
+  widget: BatchCollectionPickerWidget;
+  dispatch: MenuDispatch;
+  onRequestClose?: () => void;
+}) {
+  const connect = useCallback(
+    (_cards: string[], collection: string, connected: boolean) =>
+      dispatch({ kind: "widget", id, action: { kind: "connect_cards", collection, connected } }).then((answer) =>
+        answer === null ? false : answer.kind === "membership" && answer.made !== null ? answer.made : undefined),
+    [dispatch, id],
+  );
+  const create = useCallback(
+    (name: string) => dispatch({ kind: "widget", id, action: { kind: "create_collection", name } }),
+    [dispatch, id],
+  );
+  const checkName = useCallback(
+    (name: string) =>
+      dispatch({ kind: "widget", id, action: { kind: "check_collection_name", name } }).then((answer) =>
+        answer?.kind === "name_refusal" ? answer.reason : null),
+    [dispatch, id],
+  );
+  const tags = useMemo(() => widget.collections.map(({ name, count }) => ({ tag: name, count })), [widget.collections]);
+  const lookup = useMemo(() => new Map(widget.cards.map((card) => [card, widget.in_all])), [widget.cards, widget.in_all]);
+  return (
+    <BatchCollectionPicker
+      selectedSlugs={widget.cards}
+      tags={tags}
+      tagLookup={lookup}
+      onBatchSetTag={connect}
+      onCreateAndAssign={create}
+      onCheckName={checkName}
+      onRequestClose={onRequestClose}
+    />
+  );
+}
+
+type NewCardPickerWidget = Extract<MenuWidget, { kind: "new_card_picker" }>;
+
+/** The picker of a new card's collection: a choice leaves as the widget's
+ *  action, and the picker shows why the card could not be made. A choice
+ *  with no answer says nothing: the menu closed. */
+function NewCardPickerView({
+  id,
+  widget,
+  dispatch,
+}: {
+  id: string;
+  widget: NewCardPickerWidget;
+  dispatch: MenuDispatch;
+}) {
+  const choose = useCallback(
+    (collection: string | null, create: boolean) =>
+      dispatch({ kind: "widget", id, action: { kind: "create_card", collection, new_collection: create } }).then((answer) =>
+        answer?.kind === "failed" ? answer.message : null),
+    [dispatch, id],
+  );
+  return <NewCardCollectionPicker collections={widget.collections} current={widget.current} onChoose={choose} />;
+}
+
+type SpaceListWidget = Extract<MenuWidget, { kind: "space_list" }>;
+
+/** The list of spaces: what a row or a button of it asks leaves as the
+ *  widget's action, for the page the menu came from to carry out. */
+function SpaceListView({
+  id,
+  widget,
+  dispatch,
+  open,
+}: {
+  id: string;
+  widget: SpaceListWidget;
+  dispatch: MenuDispatch;
+  open: boolean;
+}) {
+  const ask = useCallback((action: MenuWidgetAction) => {
+    void dispatch({ kind: "widget", id, action });
+  }, [dispatch, id]);
+  const onSwitch = useCallback((path: string, newTab: boolean) => ask({ kind: "switch_space", path, new_tab: newTab }), [ask]);
+  const onReveal = useCallback((path: string) => ask({ kind: "reveal_space", path }), [ask]);
+  const onRequestForget = useCallback((path: string) => ask({ kind: "forget_space", path }), [ask]);
+  const onRevealCurrent = useCallback(() => ask({ kind: "reveal_current_space" }), [ask]);
+  const onAddSpace = useCallback(() => ask({ kind: "add_space" }), [ask]);
+  return (
+    <SpaceList
+      spaces={widget.spaces}
+      unavailable={widget.unavailable}
+      tabs={widget.tabs}
+      open={open}
+      onSwitch={onSwitch}
+      onReveal={onReveal}
+      onRequestForget={onRequestForget}
+      onRevealCurrent={onRevealCurrent}
+      onAddSpace={onAddSpace}
+    />
+  );
+}
+
+function WidgetView({
+  id,
+  widget,
+  dispatch,
+  open,
+  onRequestClose,
+}: {
+  id: string;
   widget: MenuWidget;
   dispatch: MenuDispatch;
+  /** The menu is open. */
+  open: boolean;
   /** Escape with no query closes what holds the widget: its submenu. A
    *  widget that is the whole menu has none, and Escape closes the menu. */
   onRequestClose?: () => void;
@@ -169,6 +244,12 @@ function WidgetView({
   switch (widget.kind) {
     case "collection_picker":
       return <CollectionPickerView id={id} widget={widget} dispatch={dispatch} onRequestClose={onRequestClose} />;
+    case "batch_collection_picker":
+      return <BatchCollectionPickerView id={id} widget={widget} dispatch={dispatch} onRequestClose={onRequestClose} />;
+    case "new_card_picker":
+      return <NewCardPickerView id={id} widget={widget} dispatch={dispatch} />;
+    case "space_list":
+      return <SpaceListView id={id} widget={widget} dispatch={dispatch} open={open} />;
   }
 }
 
@@ -178,8 +259,6 @@ export interface MenuSpecViewProps {
   /** The menu is open: a menu that closed starts again with its submenus
    *  shut. */
   open: boolean;
-  /** The surface's primitives; a dropdown's unless given. */
-  kit?: MenuKit;
   /** The submenus' distance from the edges, the wrappers' own unless given. */
   collisionPadding?: number;
   /** Heard before any row of the menu or of a submenu hears a key. */
@@ -187,12 +266,14 @@ export interface MenuSpecViewProps {
 }
 
 /**
- * The entries of `spec`, to stand inside a menu's surface
- * (`DropdownMenuContent`, `ContextMenuContent`).
+ * The entries of `spec`, to stand inside a dropdown's surface
+ * (`DropdownMenuContent`).
  */
-export function MenuSpecView({ spec, dispatch, open, kit = DROPDOWN_MENU_KIT, collisionPadding, onKeyDownCapture }: MenuSpecViewProps) {
+export function MenuSpecView({ spec, dispatch, open, collisionPadding, onKeyDownCapture }: MenuSpecViewProps) {
   // One submenu at a time, by its entry's id.
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
+  // A caption names the choice or the switches right under it.
+  const captionBase = useId();
   const triggers = useRef(new Map<string, HTMLDivElement>());
 
   useEffect(() => {
@@ -208,16 +289,110 @@ export function MenuSpecView({ spec, dispatch, open, kit = DROPDOWN_MENU_KIT, co
     void dispatch({ kind: "run", id });
   };
 
-  const entryOf = (entry: MenuEntry, index: number, submenu: string | null): ReactNode => {
+  /** The id of the caption at `index` of a level. */
+  const captionId = (submenu: string | null, index: number) => `${captionBase}-${submenu ?? "menu"}-${index}`;
+
+  /** The caption a choice or a run of switches at `index` stands under. */
+  const captionOver = (entries: readonly MenuEntry[], index: number, submenu: string | null): string | undefined =>
+    entries[index - 1]?.kind === "caption" ? captionId(submenu, index - 1) : undefined;
+
+  const checkboxOf = (entry: Extract<MenuEntry, { kind: "checkbox" }>): ReactNode => (
+    <DropdownMenuCheckboxItem
+      key={entry.id}
+      checked={entry.checked}
+      onCheckedChange={(checked) => {
+        void dispatch({ kind: "check", id: entry.id, checked });
+      }}
+      // The switch applies at once and the menu stays: the next one is a
+      // press away.
+      onSelect={(event) => event.preventDefault()}
+    >
+      {entry.label}
+    </DropdownMenuCheckboxItem>
+  );
+
+  const entryOf = (entry: MenuEntry, index: number, submenu: string | null, entries: readonly MenuEntry[]): ReactNode => {
     switch (entry.kind) {
       case "separator":
-        return <kit.Separator key={`separator-${index}`} />;
+        return <DropdownMenuSeparator key={`separator-${index}`} />;
+      case "caption":
+        return (
+          <div
+            key={`caption-${index}`}
+            id={captionId(submenu, index)}
+            className="px-plate py-1.5 font-mono text-sm text-muted-foreground"
+            data-menu-caption=""
+          >
+            {entry.text}
+          </div>
+        );
+      case "radio":
+        return (
+          <DropdownMenuRadioGroup
+            key={entry.id}
+            aria-labelledby={captionOver(entries, index, submenu)}
+            value={entry.value}
+            onValueChange={(value) => {
+              void dispatch({ kind: "choose", id: entry.id, value });
+            }}
+          >
+            {entry.options.map((option) => (
+              <DropdownMenuRadioItem
+                key={option.value}
+                value={option.value}
+                onSelect={(event) => {
+                  // A panel of settings stays open, the next choice a press
+                  // away; a menu that is there for the one choice closes.
+                  if (!entry.closes) event.preventDefault();
+                }}
+              >
+                <span className="min-w-0 truncate">{option.label}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        );
+      case "checkbox": {
+        // Switches that stand together are one group: the first of a run
+        // draws them all.
+        if (entries[index - 1]?.kind === "checkbox") return null;
+        const run: Extract<MenuEntry, { kind: "checkbox" }>[] = [];
+        for (const next of entries.slice(index)) {
+          if (next.kind !== "checkbox") break;
+          run.push(next);
+        }
+        return (
+          <DropdownMenuGroup key={entry.id} aria-labelledby={captionOver(entries, index, submenu)}>
+            {run.map(checkboxOf)}
+          </DropdownMenuGroup>
+        );
+      }
+      case "note":
+        return (
+          <div key={`note-${index}`} className="px-plate py-1.5 text-sm text-destructive" data-menu-note={entry.tone}>
+            {entry.text}
+          </div>
+        );
       case "item":
         return (
-          <kit.Item key={entry.id} variant={entry.variant} onSelect={() => run(entry.id)}>
-            <IconSlot icon={entry.icon} />
-            {entry.truncate ? <span className="min-w-0 truncate">{entry.label}</span> : entry.label}
-          </kit.Item>
+          <DropdownMenuItem
+            key={entry.id}
+            variant={entry.variant}
+            disabled={entry.disabled}
+            staysOpen={entry.stays_open}
+            onSelect={(event) => {
+              // What comes of it shows in the menu: the menu stays.
+              if (entry.stays_open) event.preventDefault();
+              run(entry.id);
+            }}
+          >
+            {!entry.plain && <IconSlot icon={entry.icon} />}
+            {entry.detail !== null ? (
+              <span className="flex flex-col">
+                <span>{entry.label}</span>
+                <span className="text-base text-muted-foreground" data-menu-detail="">{entry.detail}</span>
+              </span>
+            ) : entry.truncate ? <span className="min-w-0 truncate">{entry.label}</span> : entry.label}
+          </DropdownMenuItem>
         );
       case "widget":
         return (
@@ -226,6 +401,7 @@ export function MenuSpecView({ spec, dispatch, open, kit = DROPDOWN_MENU_KIT, co
             id={entry.id}
             widget={entry.widget}
             dispatch={dispatch}
+            open={open}
             onRequestClose={submenu === null
               ? undefined
               : () => {
@@ -238,27 +414,27 @@ export function MenuSpecView({ spec, dispatch, open, kit = DROPDOWN_MENU_KIT, co
         );
       case "submenu":
         return (
-          <kit.Sub
+          <DropdownMenuSub
             key={entry.id}
             open={openSubmenu === entry.id}
             onOpenChange={(next) => setOpenSubmenu((current) => (next ? entry.id : current === entry.id ? null : current))}
           >
-            <kit.SubTrigger ref={(node) => setTrigger(entry.id, node)}>
-              <IconSlot icon={entry.icon} />
+            <DropdownMenuSubTrigger ref={(node) => setTrigger(entry.id, node)}>
+              {!entry.plain && <IconSlot icon={entry.icon} />}
               {entry.label}
-            </kit.SubTrigger>
-            <kit.SubContent
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent
               widthRole={entry.content.role}
               className={menuSurfaceClass(entry.content.role)}
               collisionPadding={collisionPadding}
               onKeyDownCapture={onKeyDownCapture}
             >
-              {entry.content.entries.map((inner, innerIndex) => entryOf(inner, innerIndex, entry.id))}
-            </kit.SubContent>
-          </kit.Sub>
+              {entry.content.entries.map((inner, innerIndex) => entryOf(inner, innerIndex, entry.id, entry.content.entries))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         );
     }
   };
 
-  return spec.entries.map((entry, index) => entryOf(entry, index, null));
+  return spec.entries.map((entry, index) => entryOf(entry, index, null, spec.entries));
 }

@@ -134,8 +134,8 @@ function SpaceLayout({ vaultId, selector }: { vaultId: string; selector: ReactNo
       {layout && (
         <>
           <FolderField
-            label="Cards"
-            caption={`New card documents, currently ${displayValue(layout.cards)}`}
+            label="Elements"
+            caption={`New element documents, currently ${displayValue(layout.cards)}`}
             value={layout.cards}
             disabled={busy}
             onCommit={(cards) => void commit({ ...layout, cards })}

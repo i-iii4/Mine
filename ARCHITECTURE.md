@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>) | [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>) | [AUDIT_FEED_IMAGES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_FEED_IMAGES.md>) | [AUDIT_MENU_PLACEMENT.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_MENU_PLACEMENT.md>) | [AUDIT_CODE_QUALITY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_CODE_QUALITY.md>) | [SPEC_MENU_WINDOW.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MENU_WINDOW.md>)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>) | [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>) | [AUDIT_FEED_IMAGES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_FEED_IMAGES.md>) | [AUDIT_MENU_PLACEMENT.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_MENU_PLACEMENT.md>) | [AUDIT_CODE_QUALITY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_CODE_QUALITY.md>) | [SPEC_MENU_WINDOW.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MENU_WINDOW.md>) | [SPEC_OUTSIDE_WINDOW.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_OUTSIDE_WINDOW.md>)
 
 ## Context
 
@@ -84,15 +84,19 @@ Mine решает это: визуальный букмаркинг с лока�
 ## Обновление готовых превью
 
 `thumb:updated` инвалидирует строку карточки независимо от её типа. App передаёт
-загруженные slug в `previewRowQueue`: дедупликация, окно 32 ms, пакеты до 200,
-один запрос одновременно. `get_grid_rows` читает общий feed read model внутри
-SQLite snapshot и возвращает `GridRowsSnapshot { path, generation, blocks }`.
-Нет повторного сканирования файлов или загрузки всего диапазона ленты.
+загруженные карточки в очередь частичных чтений ленты (`createFeedPatchQueue`,
+`src/lib/feedChanges.ts`): дедупликация, окно 32 ms, один запрос одновременно.
+`read_feed_changes` читает общий feed read model внутри SQLite snapshot и
+возвращает `FeedPatch`: названные карточки, их места в ленте, ревизию и
+счётчики. Нет повторного сканирования файлов или загрузки всего диапазона
+ленты. Тем же путём страница читает карточки, которые изменила команда своя
+или другой вкладки (SPEC_FRONTEND.md, «Обновление ленты»).
 
-App заменяет только существующие строки с сохранением порядка и object identity.
-Ревизии строк не позволяют позднему полному snapshot откатить новое превью;
-при этом частичный ответ не продвигает ревизию всего маршрута и не блокирует
-обновление его состава. Очередь отменяется при смене маршрута/пространства.
+App ставит строки на их места с сохранением object identity неизменившихся
+карточек. Чтения списка идут по одному: частичное ждёт идущее полное, а
+полное, начатое позже, покрывает частичное в пути, поэтому поздний полный
+snapshot не откатывает новое превью. Очередь сбрасывается при смене
+маршрута/пространства.
 Preview-only `vault-changed` сохраняется для других подписчиков, но не запускает
 полную перезагрузку основной ленты.
 
@@ -743,21 +747,15 @@ iOS UI contract:
   значение одноимённой постоянной только для проверки при сборке. Наибольшего
   значения у меню рядом с лентой нет, его держит наименьшая ширина ленты;
   `S_max` (600 px) остался только у меню поверх ленты.
-- Компактный пункт меню рисует стопку мини-карточек (`ChannelIcon.tsx`):
-  геометрия покоя и раскрытия и пружина посчитаны один раз в `channelIcon.ts`
-  для заданной стороны карточки и переданы в CSS свойствами; стопка
-  раскрывается для пункта под указателем сразу, тем же ответом, что зажигает
-  название (с 22.10.2026, прежде ответ `raised` движка намерения).
-- Пробы меню (PLAN 50.38) живут в `src/lib/compactStack.ts`:
-  каждый выбор хранится своим ключом `localStorage` и ставит атрибут на корень
-  документа, CSS отвечает на атрибут, React читает выбор через
-  `useSyncExternalStore` (`trialChoice`, им же хранит выбор проба вида
-  открытой карточки, `cardView.ts`); группы панели Display рисует
-  `CompactStackMenu.tsx`. Компактная таблица отложена
-  (`COMPACT_TABLE_POSTPONED`, решение пользователя 23.10.2026): ниже порога
-  компактных строк меню всегда в виде List, группы Sidebar style и Compact
-  stack edge скрыты, код таблицы, края стопки и перехода строк
-  (`sidebarRowsMorph.ts`) остаётся вне работы до возвращения к ней. Вид List
+- Ниже порога компактных строк меню всегда в виде List. Компактная таблица
+  удалена по решению пользователя 15.11.2026 (PLAN 51.21), код в истории Git:
+  стопка мини-карточек (`ChannelIcon.tsx`, `channelIcon.ts`), пробы Sidebar
+  style и Compact stack edge (`compactStack.ts`, `CompactStackMenu.tsx`) и
+  переход строк в узкие (`sidebarRowsMorph.ts`). Пружина 0,3 с, принятая для
+  стопки, живёт в `src/lib/spring.ts`: на ней идут поворот знака строки List,
+  переход List и таблицы и окно превью. Выбор вида открытой карточки
+  (`cardView.ts`) хранит `storedChoice` (`src/lib/storedChoice.ts`): свой ключ
+  `localStorage`, чтение React через `useSyncExternalStore`. Вид List
   постоянный: шаг 24 px и оглавление; столбцы строк всегда Name, Previews,
   Count (решение пользователя 15.11.2026). Обводку миниатюр меню рисует CSS по атрибуту
   `data-thumb-edge`, граф рисует ту же обводку на холсте цветами
@@ -1084,8 +1082,11 @@ CREATE VIRTUAL TABLE blocks_fts USING fts5(
 );
 
 -- Hybrid search derived state (rebuildable, local app data store):
--- search_document_state(block_id, slug, document_hash)
+-- search_document_state(block_id, slug, document_hash, source_stamp)
 -- search_chunks(block_id, slug, field, chunk_index, text, offsets, text_hash)
+-- search_words(chars, word)            -- словарь слов фрагментов (схема 8)
+-- search_word_chunks(words)            -- FTS5: фрагменты каждого слова словаря
+-- search_metadata_terms(terms)         -- FTS5: слова фрагментов автора и адреса
 -- search_embeddings(chunk_id, model_id, dim, vector, text_hash)
 -- fastembed model files live outside the repo in app data cache:
 -- ~/Library/Application Support/com.mine.app/cache/fastembed
@@ -1671,7 +1672,7 @@ stable `18rem` width. `CollectionPicker` and `BatchCollectionPicker` use
 `20rem`, because their rows reserve a fixed `10ch` action slot and need enough
 remaining width for Russian collection names. Product components should request
 a semantic menu width role through shared `DropdownMenuContent`,
-`DropdownMenuSubContent`, `ContextMenuContent` or `ContextMenuSubContent`
+`DropdownMenuSubContent`
 instead of hardcoding raw Tailwind width utilities.
 
 Superseded 07.10.2026 by the user's decision to standardise every menu's
@@ -2235,7 +2236,7 @@ Canvas перезапускает симуляцию всякий раз, ког
 | ureq | 2.x | Синхронный HTTP-клиент (импорт Are.na) | MIT/Apache-2.0 |
 | tailwindcss | 4.x | Стилизация | MIT |
 | shadcn CLI | 4.x | Инструмент source-owned компонентов; конфигурация Mine разрешается CLI как `base = radix` | MIT |
-| radix-ui | 1.x | Текущая headless-основа Button, Dialog, ContextMenu и других UI-компонентов Mine | MIT |
+| radix-ui | 1.x | Текущая headless-основа Button, Dialog, DropdownMenu и других UI-компонентов Mine | MIT |
 | lucide-react | latest | Иконки (замена ручных SVG) | ISC |
 | class-variance-authority | latest | Варианты компонентов (CVA) | Apache-2.0 |
 | tw-animate-css | latest | CSS-анимации для Tailwind v4 | MIT |
@@ -2941,7 +2942,7 @@ Phase 50 в [PLAN.md](PLAN.md). Источник требований: конт�
 
 Требования пользователя 23.10.2026 и 24.10.2026. Контракт:
 [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>), О1 по О16.
-Вид «Peek» группы «Card view» панели Display рядом с полным видом; функция
+Вид «Peek» группы «Element view» панели Display рядом с полным видом; функция
 продукта по решению пользователя 15.11.2026 (до него проба). Код:
 `src/components/CardPeek.tsx` (замеры и запись в DOM), `src/lib/cardPeek.ts`
 (правила движения), `src/lib/cardPeekSource.ts` (где стоят карточка и её
@@ -3100,8 +3101,9 @@ Tauri по умолчанию), приложение и native-host 11.0 (зна
 | Токены ролей и тест на числа | Принято: одно движение одного рода идёт одинаково везде, уровень меняется в одном месте |
 | Время `Full` числом в месте вызова и общая функция уровня (`motionMs(fullMs)`, 50.86) | Не выбрано: числа расходились у одинаковых движений (соседи вкладки 150 мс, соседи строки 250 мс), и каждое место держало своё правило `Minimal` |
 
-Реализация 13.11.2026 (50.88). Пружины стопки и знака строки стоят
-переменными `--channel-icon-duration` и `--channel-icon-easing` только в
+Реализация 13.11.2026 (50.88). Пружина знака строки стоит переменными
+`--spring-duration` и `--spring-easing` (`src/lib/spring.ts`; до удаления
+стопки мини-карточек 15.11.2026 `--channel-icon-*`) только в
 `Full`; без них CSS берёт токены Перемещения, поэтому уровень и здесь
 меняет только токены. Пружины, которые ведёт код (окно превью, переходы
 списка, смена ширины окна карточки, переход в полный вид), в `Minimal` идут
@@ -3140,7 +3142,7 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
 `src/lib/menuBlink.ts` (`useMenuItemBlink`) держит меню открытым, пока
 пункт мигает `MOTION_MENU_BLINK_MS`, затем выбирает пункт тем же путём, каким
 его выбирает меню (`click()`), поэтому меню закрывается и команда идёт ровно
-один раз. Подключён в `DropdownMenuItem` и `ContextMenuItem`; пункт, который
+один раз. Подключён в `DropdownMenuItem`; пункт, который
 сам оставляет меню открытым, помечен `staysOpen`.
 
 | Вариант | Результат выбора |
@@ -3204,19 +3206,29 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
 проба». Переключатель `Menus: Web / Window` в меню логотипа, по умолчанию
 `Web`. В тот же день пользователь решил перевести в отдельное окно все
 меню: требования и план в [SPEC_MENU_WINDOW.md](SPEC_MENU_WINDOW.md), этап 1
-(дефекты пробы и правила расположения) и общий механизм этапа 2 реализованы
-15.11.2026, пункты ниже описывают состояние после них.
+(дефекты пробы и правила расположения), общий механизм этапа 2, этапы 3 и 4
+(меню выделения, меню содержимого открытой карточки) и часть этапа 5
+(`Display`, меню логотипа) реализованы 15.11.2026, этапы 6 и 7 (окно
+настроек, полоса вкладок) 16.11.2026; пункты ниже описывают состояние
+после них.
 
-1. **Одно окно на приложение.** Прозрачное окно без рамки `menu-panel`
+1. **Одно окно на приложение.** Прозрачное окно меню без рамки
    ([menu_panel](src-tauri/src/menu_panel/mod.rs)) создаётся один раз и в
    покое пропускает щелчки. Его рамку бэкенд ставит на каждое открытие,
    пока страница пуста: меню, место под подменю и поле под тень (МО29).
    Видимым оно становится только после проверки своей прозрачности
    по флагам окна и снимку страницы WebKit. При открытии оно становится
-   ключевым, но не главным: у панели свой класс окна, наследник класса окон
-   tao, созданный публичными функциями среды Objective-C. Он никогда не
-   главный и ключевой, только пока меню открыто; остальные окна не
-   затронуты (МО62). Режим `Web` убирает окно.
+   ключевым, но не главным. Окно меню создаёт само приложение, сразу своим
+   классом `MineMenuPanelWindow`, наследником `NSWindow`, собранным
+   публичными функциями среды Objective-C: класс никогда не главный и
+   ключевой, только пока меню открыто. Окно Tauri `menu-panel` остаётся
+   скрытой оболочкой: оно создаёт страницу, а бэкенд переносит её в окно
+   меню (МО62). Класс живого окна не меняется: AppKit и WebKit наблюдают
+   каждое окно через KVO с момента создания, и смена класса роняла
+   приложение при старте (МО62а). Остальные окна не затронуты. Проверка
+   на настоящих окнах AppKit без показа на экране:
+   [menu_panel_window.rs](src-tauri/tests/menu_panel_window.rs). Режим
+   `Web` убирает оболочку и окно меню.
 2. **Открытие за один шаг.** Вкладка просит открыть меню из обработчика
    ввода и передаёт описание меню и размер, посчитанный по описанию
    ([menuSpec.ts](src/lib/menuSpec.ts)). Бэкенд ставит
@@ -3236,8 +3248,20 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
    ([MenuSpecView.tsx](src/components/MenuSpecView.tsx)) и в панели, и на
    странице. Владение меню для компонента даёт хук
    ([usePanelMenu.ts](src/hooks/usePanelMenu.ts)). Состав меню карточки
-   собирает [cardMenuEntries.ts](src/lib/cardMenuEntries.ts), страница панели
-   ([src/menuPanel](src/menuPanel)) рисует его теми же компонентами, а каждый
+   собирает [cardMenuEntries.ts](src/lib/cardMenuEntries.ts), меню выделения
+   [groupSelectionMenu.ts](src/lib/groupSelectionMenu.ts), меню содержимого
+   открытой карточки (медиафайл, коллекция новой карточки, встроенное видео)
+   [openCardMenus.ts](src/lib/openCardMenus.ts), панели `Display`
+   [displayMenu.ts](src/lib/displayMenu.ts), меню полосы вкладок
+   [barMenus.ts](src/tabbar/barMenus.ts). Страница настроек и страница
+   полосы вкладок такие же источники меню, как страница вкладки; у полосы
+   отказом служит системное меню, потому что её страница высотой в один
+   ряд ([useBarMenu.ts](src/tabbar/useBarMenu.ts)). Меню по описанию открывает
+   хук [useSpecMenu.ts](src/hooks/useSpecMenu.ts), меню по правому щелчку
+   постоянный владелец [SpecPointMenu.tsx](src/components/SpecPointMenu.tsx):
+   в панели, а на странице выпадающим меню с якорем нулевого размера, углом
+   в точке щелчка. Страница панели
+   ([src/menuPanel](src/menuPanel)) рисует описание теми же компонентами, а каждый
    выбор вкладка выполняет своими обработчиками
    ([menuPanelSource.ts](src/lib/menuPanelSource.ts)). Меню закрывает тот,
    кто его открыл, в том числе при своём размонтировании; компонент,
@@ -3266,7 +3290,7 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
    `drawsBackground` у `WKWebView`: публичной замены нет, отказ обоих виден
    (предупреждение в журнале; проверка прозрачности). Чтение
    `_hasActiveAppearance` и подмена метода у общего класса окон убраны
-   (МО62–МО65).
+   (МО62–МО65). Те же два у наружного окна (074).
 
 | Вариант | Результат выбора |
 |---|---|
@@ -3279,3 +3303,20 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
 ### 073: Тесты скорости Rust: один оптимизированный запуск
 
 Решение 15.11.2026 ([AUDIT_CODE_QUALITY.md](AUDIT_CODE_QUALITY.md), О2; [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md), Пр4). Тест Rust, который утверждает предел времени, называется `…_within_its_limit` и помечен `#[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]`. Обычный `test:rust` собирает тесты без оптимизации и такие тесты пропускает: там предел дал бы ложное падение. Команда `bun run test:rust-speed` собирает тесты библиотеки `mine` с `opt-level = 3` (переменные `CARGO_PROFILE_DEV_OPT_LEVEL` и `CARGO_PROFILE_TEST_OPT_LEVEL`, каталог `target/sidebar-strip`, общий с проверкой ленты миниатюр) и запускает только пропущенные тесты с этим именем, по одному: `--ignored --test-threads=1 within_its_limit`. По одному, чтобы тесты времени не делили процессор и диск. Предел в таком тесте утверждается всегда, переменных окружения для этого нет. Команда входит в `verify`. Новый тест скорости получает то же окончание имени и ту же пометку: тест с пометкой и другим именем не запустит никто, а тест с этим именем без пометки утверждал бы предел в неоптимизированной сборке. До 15.11.2026 три таких теста утверждали предел только при своей переменной окружения, две из них выставляли проверки, которым `test:browser` передаёт `--skip-rust`, третью не выставлял никто.
+
+### 074: Наружное окно для превью и перетаскиваемой карточки
+
+Решения пользователя 16.11.2026 ([SPEC_OUTSIDE_WINDOW.md](SPEC_OUTSIDE_WINDOW.md)): окно превью, которому сбоку нет места внутри окна приложения, встаёт снаружи; карточку перетаскивают за окно, на полосу и в боковое меню любого окна Mine. Обе поверхности рисуются в одном наружном окне (`src-tauri/src/outside_window/`, страница `outside-window.html`, `src/outsideWindow/`), отдельном от окна меню (072).
+
+1. **Обычное окно Tauri.** `focusable(false)`: tao сам отвечает «нет» на `canBecomeKeyWindow` и `canBecomeMainWindow`. Класс окна не меняется (МО62а); прозрачность, тень, уровень и поведение в пространствах ставят публичные свойства NSWindow. `ignoresMouseEvents` всегда `YES`: указатель проходит к окну ниже. Риск `setOpaque:` на окне, которое AppKit и WebKit наблюдают через KVO, проверяет `tests/outside_window.rs` на настоящем окне tao со страницей.
+2. **Два назначения, одно окно.** Превью: уровень `NSFloatingWindowLevel` (ниже окна меню), рамка столбцом на показ, движение на странице. Перетаскиваемая карточка: уровень `kCGDraggingWindowLevel`, рамка у указателя, окно движет бэкенд в обработчике движения мыши. Вместе они не бывают: начало перетаскивания закрывает превью.
+3. **Деление окна превью.** Намерение (`HoverPreviewWindow`: указатель, правило открытия, чтение карточки, решение «внутри или снаружи») и показ (`HoverPreviewPresenter`: слои, пружины, растворения, кадры) связаны через `HoverPreviewStage`. Снаружи показ тот же код на странице наружного окна, а намерение ведёт его сообщениями через бэкенд (`OutsidePreviewStage`), с номерами по правилам окна меню (МО34–МО38).
+4. **Перетаскивание карточки.** Перетаскиванием владеет страница (dnd-kit); бэкенд следит за указателем монитором отрыва вкладки и находит окно под ним (`windowNumberAtPoint:belowWindowWithWindowNumber:`). Путь к полосе один для всех окон: прежний путь страницы к своей полосе убран.
+5. **Закрытые зависимости** те же, что у окна меню: `drawsBackground` и `_setWindowOcclusionDetectionEnabled:` у `WKWebView` (МО64, МО65).
+
+| Вариант | Результат выбора |
+|---|---|
+| Отдельное наружное окно на оба случая | Выбрано |
+| Окно меню | Отклонено: оно берёт клавиатуру и щелчки, а меню и превью видны вместе |
+| Два наружных окна, по одному на случай | Не выбрано: вместе они не бывают, вторая страница держала бы вторую копию карточек |
+| Движение окна превью кадрами через бэкенд | Отклонено: каждый кадр шёл бы через два перехода между процессами |

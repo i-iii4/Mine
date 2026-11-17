@@ -15,31 +15,33 @@ use crate::domain::collection::{
 };
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{files, index, media_refs};
+use crate::storage::{files, index, media_refs, note_write, reconcile};
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 /// Add a tag to a block: read .md, update frontmatter, write back, re-index.
 fn add_tag_unannounced(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
-    let vault_state = space
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    set_block_membership(&vs.conn, &vs.vault, &slug, &tag, true)
+    let vault = {
+        let vault_state = space
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        set_block_membership(&vs.conn, &vs.vault, &slug, &tag, true)?;
+        vs.vault.clone()
+    };
+    recheck_written_previews(&webview, vault, vec![slug]);
+    Ok(())
 }
 
 /// [`add_tag_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
-pub fn add_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
+pub fn add_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<super::effects::Changed<()>, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = add_tag_unannounced(webview, state, slug, tag);
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-    }
-    outcome
+    outcome.map(|value| announcing.answer(value, Vec::new()))
 }
 
 /// Remove a tag from a block: read .md, update frontmatter, write back, re-index.
@@ -50,24 +52,26 @@ fn remove_tag_unannounced(
     tag: String,
 ) -> Result<(), CommandError> {
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
-    let vault_state = space
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    set_block_membership(&vs.conn, &vs.vault, &slug, &tag, false)
+    let vault = {
+        let vault_state = space
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        set_block_membership(&vs.conn, &vs.vault, &slug, &tag, false)?;
+        vs.vault.clone()
+    };
+    recheck_written_previews(&webview, vault, vec![slug]);
+    Ok(())
 }
 
 /// [`remove_tag_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
-pub fn remove_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
+pub fn remove_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<super::effects::Changed<()>, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = remove_tag_unannounced(webview, state, slug, tag);
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-    }
-    outcome
+    outcome.map(|value| announcing.answer(value, Vec::new()))
 }
 
 /// [`set_blocks_membership_inner`] on the calling tab's space.
@@ -79,12 +83,37 @@ fn set_blocks_membership_unannounced(
     connected: bool,
 ) -> Result<(), CommandError> {
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
-    let vault_state = space
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    set_blocks_membership_inner(&vs.conn, &vs.vault, &slugs, &tag, connected)
+    let (vault, written) = {
+        let vault_state = space
+            .vault_state
+            .lock()
+            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+        let written = set_blocks_membership_inner(&vs.conn, &vs.vault, &slugs, &tag, connected)?;
+        (vs.vault.clone(), written)
+    };
+    recheck_written_previews(&webview, vault, written);
+    Ok(())
+}
+
+/// The cards `slugs` were written by a membership command, and the watcher
+/// passes over its writes (`note_write::expect_own_write`): their previews
+/// are checked against the written notes here, in the space's preview queue,
+/// as the watcher would have asked (SPEC_THUMBNAILS.md, «Свои записи Mine»).
+/// A membership changes no picture, so nothing is drawn anew: the check
+/// brings the cards' previews from `stale` back to `ready`. A failure to
+/// queue it leaves that to the next pass over the space.
+fn recheck_written_previews(webview: &tauri::Webview, vault: VaultLayout, slugs: Vec<String>) {
+    use tauri::Manager;
+
+    if slugs.is_empty() {
+        return;
+    }
+    if let Err(error) =
+        crate::commands::state::schedule_preview_reconcile(webview.app_handle(), vault, slugs, false)
+    {
+        log::warn!("membership written, its preview check not queued: {error}");
+    }
 }
 
 /// Connect every card of `slugs` to the collection `tag`, or disconnect them
@@ -98,13 +127,10 @@ pub fn set_blocks_membership(
     slugs: Vec<String>,
     tag: String,
     connected: bool,
-) -> Result<(), CommandError> {
+) -> Result<super::effects::Changed<()>, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = set_blocks_membership_unannounced(webview, state, slugs, tag, connected);
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-    }
-    outcome
+    outcome.map(|value| announcing.answer(value, Vec::new()))
 }
 
 /// The membership of many cards in one source mutation: every card changes,
@@ -124,7 +150,7 @@ pub(crate) fn set_blocks_membership_inner(
     slugs: &[String],
     tag: &str,
     connected: bool,
-) -> Result<(), CommandError> {
+) -> Result<Vec<String>, CommandError> {
     let collection_ref = normalize_collection_ref(tag);
     if collection_ref.is_empty() {
         return Err(CommandError::Internal("collection ref is empty".to_string()));
@@ -136,8 +162,7 @@ pub(crate) fn set_blocks_membership_inner(
     let names = collection_link_matcher(conn, &collection_ref)?;
 
     let mut seen = std::collections::HashSet::new();
-    let mut writes = Vec::with_capacity(slugs.len());
-    let mut projections = Vec::with_capacity(slugs.len());
+    let mut rewrites = Vec::with_capacity(slugs.len());
     for slug in slugs {
         if !seen.insert(slug.as_str()) {
             continue;
@@ -159,26 +184,53 @@ pub(crate) fn set_blocks_membership_inner(
         } else {
             collections.retain(|link| !names(link));
         }
-        let (write, projection) =
-            MembershipRewrite::prepare(vault, slug, path, content, &collections)?.into_source_write();
-        writes.push(write);
-        projections.push(projection);
+        rewrites.push(MembershipRewrite::prepare(vault, slug, path, content, &collections)?);
     }
-    if writes.is_empty() {
-        return Ok(());
-    }
+    commit_own_rewrites(conn, vault, "set_blocks_membership", rewrites)
+}
 
-    StagedSourceMutation::stage(writes)?.commit_with_index(
-        conn,
-        "set_blocks_membership",
-        |index_conn| {
-            for projection in &projections {
-                projection.upsert(index_conn, vault)?;
-            }
-            Ok(())
-        },
+/// Publish membership rewrites as Mine's own writes and return the slugs of
+/// the cards written (SPEC_THUMBNAILS.md, «Свои записи Mine»). Each note is
+/// told to the watcher by its bytes, so the watcher passes over exactly this
+/// write and hears any other change of the note, however soon after; and each
+/// is projected in the publishing transaction as a pass over the space
+/// projects it, the row and the source stamp together, so no later pass finds
+/// anything new in it.
+///
+/// Until 15.11.2026 a membership command wrote the row alone and left the
+/// rest to the watcher, which indexed the note again and told every tab of
+/// the space, the calling one included, to read its whole feed
+/// (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+fn commit_own_rewrites(
+    conn: &Connection,
+    vault: &VaultLayout,
+    operation: &'static str,
+    rewrites: Vec<MembershipRewrite>,
+) -> Result<Vec<String>, CommandError> {
+    if rewrites.is_empty() {
+        return Ok(Vec::new());
+    }
+    let written: Vec<(String, PathBuf)> = rewrites
+        .iter()
+        .map(|rewrite| (rewrite.projection.block.slug.clone(), rewrite.path.clone()))
+        .collect();
+    let own_bytes: Vec<Vec<u8>> = rewrites.iter().map(|rewrite| rewrite.bytes.clone()).collect();
+    let staged = StagedSourceMutation::stage(
+        rewrites
+            .into_iter()
+            .map(|rewrite| rewrite.into_source_write().0)
+            .collect(),
     )?;
-    Ok(())
+    for ((slug, _), bytes) in written.iter().zip(&own_bytes) {
+        note_write::expect_own_write(vault, slug, bytes);
+    }
+    staged.commit_with_index(conn, operation, |index_conn| {
+        for (_, path) in &written {
+            reconcile::project_source_path(index_conn, vault, path)?;
+        }
+        Ok(())
+    })?;
+    Ok(written.into_iter().map(|(slug, _)| slug).collect())
 }
 
 /// Whether a card's link names the collection `collection_ref`: by the ref or
@@ -236,7 +288,8 @@ fn set_block_membership(
     }
 
     let rewrite = MembershipRewrite::prepare(vault, slug, path, content, &collections)?;
-    commit_block_rewrite(conn, vault, rewrite)
+    commit_own_rewrites(conn, vault, "rewrite_block_collections", vec![rewrite])?;
+    Ok(())
 }
 
 /// A card's membership written into its source, with what the written file
@@ -317,20 +370,6 @@ impl MembershipRewrite {
             self.projection,
         )
     }
-}
-
-fn commit_block_rewrite(
-    conn: &Connection,
-    vault: &VaultLayout,
-    rewrite: MembershipRewrite,
-) -> Result<(), CommandError> {
-    let (write, projection) = rewrite.into_source_write();
-    StagedSourceMutation::stage(vec![write])?.commit_with_index(
-        conn,
-        "rewrite_block_collections",
-        |index_conn| projection.upsert(index_conn, vault),
-    )?;
-    Ok(())
 }
 
 fn file_saved_at(path: &std::path::Path) -> DateTime {
@@ -539,13 +578,90 @@ mod tests {
                 .unwrap();
         std::fs::write(&path, "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nEdited in Obsidian").unwrap();
 
-        let refused = commit_block_rewrite(&conn, &vault, rewrite);
+        let refused = commit_own_rewrites(&conn, &vault, "rewrite_block_collections", vec![rewrite]);
 
         assert!(matches!(refused, Err(CommandError::SourceChanged { .. })), "{refused:?}");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nEdited in Obsidian"
         );
+    }
+
+    /// A membership write is Mine's own: the watcher passes over the note
+    /// while it holds exactly the bytes the command wrote, and hears any
+    /// other change of it, however soon after (SPEC_INTEGRATION.md, «Список
+    /// изменённых карточек»; SPEC_EDITING.md, Л3.6).
+    #[test]
+    fn membership_write_is_passed_over_and_a_change_after_it_is_heard() {
+        let (_dir, vault, conn) = space_with_card("---
+saved_at: 2026-07-10T00:00:00Z
+---
+Body");
+        collection_page(&vault, &conn, "Design");
+        let path = vault.block_path("Note");
+        assert!(!note_write::is_own_write(&vault, &path));
+
+        set_block_membership(&conn, &vault, "Note", "Design", true).unwrap();
+        assert!(note_write::is_own_write(&vault, &path));
+
+        // Obsidian saves the note a moment later: not Mine's bytes.
+        let written = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{written}\nEdited in Obsidian")).unwrap();
+        assert!(!note_write::is_own_write(&vault, &path));
+    }
+
+    /// The command does the watcher's part of the write: the note is in the
+    /// index with its source stamp, so a pass over the space finds nothing
+    /// new in it and tells no tab to read again.
+    #[test]
+    fn membership_write_leaves_nothing_for_a_pass_over_the_space() {
+        let (_dir, vault, conn) = space_with_cards(&[
+            ("One", "---
+saved_at: 2026-07-10T00:00:00Z
+---
+Body one"),
+            ("Two", "---
+saved_at: 2026-07-11T00:00:00Z
+---
+Body two"),
+        ]);
+        collection_page(&vault, &conn, "Design");
+        // The pass that brings the fixture's index up to its files.
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let stamp = |slug: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT source_stamp FROM source_index_state WHERE slug = ?1",
+                [slug],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+        let before = stamp("One");
+
+        let written = set_blocks_membership_inner(
+            &conn,
+            &vault,
+            &["One".to_string(), "Two".to_string(), "One".to_string()],
+            "Design",
+            true,
+        )
+        .unwrap();
+        assert_eq!(written, vec!["One".to_string(), "Two".to_string()]);
+        // The stamp moved with the row, in the publishing transaction.
+        assert!(stamp("One").is_some());
+        assert_ne!(stamp("One"), before);
+        let generation = crate::storage::projection::current_generation(&conn).unwrap();
+
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(
+            crate::storage::projection::current_generation(&conn).unwrap(),
+            generation,
+            "the pass wrote the index again"
+        );
+
+        // A card that already is as asked is not written and not named.
+        let again = set_blocks_membership_inner(&conn, &vault, &["One".to_string()], "Design", true).unwrap();
+        assert!(again.is_empty());
     }
 
     #[test]
@@ -578,7 +694,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = commit_block_rewrite(&conn, &vault, rewrite);
+        let result = commit_own_rewrites(&conn, &vault, "rewrite_block_collections", vec![rewrite]);
 
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);

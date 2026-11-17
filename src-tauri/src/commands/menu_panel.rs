@@ -10,7 +10,7 @@ use tauri::{AppHandle, Webview};
 use crate::menu_panel::spec::{MenuAnswer, MenuSpec};
 use crate::menu_panel::{
     self, MenuPanelCloseOutcome, MenuPanelCloseReason, MenuPanelOpenRequest, MenuPanelPageRequest, MenuPanelPaint,
-    MenuPanelRefusal, MenuPanelStatus,
+    MenuPanelProgress, MenuPanelRefusal, MenuPanelStatus,
 };
 
 /// Make the panel unless it exists; whether it is ready. `page` is the load
@@ -68,4 +68,11 @@ pub fn menu_panel_request(app: AppHandle, webview: Webview, request: MenuPanelPa
 #[tauri::command]
 pub fn menu_panel_painted(app: AppHandle, paint: MenuPanelPaint) {
     menu_panel::painted(&app, &paint);
+}
+
+/// The panel's page tells a step of the menu it draws, before its first
+/// frame: kept for the log of a menu that draws nothing in time.
+#[tauri::command]
+pub fn menu_panel_progress(app: AppHandle, webview: Webview, progress: MenuPanelProgress) {
+    menu_panel::progress(&app, &webview, &progress);
 }

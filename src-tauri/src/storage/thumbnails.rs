@@ -393,7 +393,19 @@ pub fn is_thumb_fresh_with_resolver(
         );
         return false;
     }
-    for dependency in preview_dependency_paths(block, resolver) {
+    // Which file the thumbnail depends on is found by reading the head of
+    // each candidate picture; a candidate in iCloud would be brought down
+    // for it, on every sweep, and a refused read would name another
+    // candidate each time. With media of the card in iCloud the thumbnail
+    // there is kept as it is (SPEC_CLOUD_STORAGE.md, Х5): iCloud keeps a
+    // file's size and time when it takes the contents, and a file that did
+    // change is the preview pass's, which sees it in the note's source stamp.
+    let dependencies = if preview_plan::first_preview_source_in_cloud(block, resolver).is_some() {
+        Vec::new()
+    } else {
+        preview_dependency_paths(block, resolver)
+    };
+    for dependency in dependencies {
         let Ok(dep_meta) = std::fs::metadata(&dependency) else {
             log::debug!(
                 "is_thumb_fresh({}): dependency missing: {}",
@@ -810,6 +822,19 @@ fn png_crc(bytes: &[u8]) -> u32 {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+/// A reader of the picture at `source`, a file of the space, with its format
+/// guessed from its bytes. Opened through the one door of reads of space
+/// files (`cloud_files::open`): a picture whose contents iCloud refuses to
+/// bring down fails here with that refusal in its error chain
+/// (`cloud_files::is_refusal`).
+fn open_source_image(source: &Path) -> Result<image::ImageReader<std::io::BufReader<std::fs::File>>> {
+    let file = crate::storage::cloud_files::open(source)
+        .with_context(|| format!("failed to open image: {}", source.display()))?;
+    image::ImageReader::new(std::io::BufReader::new(file))
+        .with_guessed_format()
+        .with_context(|| format!("failed to read image header: {}", source.display()))
+}
+
 /// Generate a thumbnail from a source image.
 ///
 /// - Reads source image (JPEG, PNG, WebP, GIF)
@@ -824,10 +849,7 @@ pub fn generate_thumbnail(source: &Path, dest: &Path, max_size: u32) -> Result<P
     // PNGs written as `<slug>.jpg`, and `image::open` picks its decoder by
     // extension — it handed those files to the JPEG decoder and failed, which
     // is why 38 cards had no levels and drew as dark squares.
-    let img = image::ImageReader::open(source)
-        .with_context(|| format!("failed to open image: {}", source.display()))?
-        .with_guessed_format()
-        .with_context(|| format!("failed to read image header: {}", source.display()))?
+    let img = open_source_image(source)?
         .decode()
         .with_context(|| format!("failed to decode image: {}", source.display()))?;
 
@@ -938,7 +960,7 @@ pub fn generate_composite_thumbnail(
         .take(tile_count)
         .zip(composite_layout_slots(tile_count, max_size).into_iter())
     {
-        let img = image::open(source).with_context(|| {
+        let img = open_source_image(source)?.decode().with_context(|| {
             format!(
                 "failed to open composite source image: {}",
                 source.display()
@@ -1102,7 +1124,7 @@ pub fn generate_video_thumbnail(
     use openh264::decoder::Decoder;
     use openh264::formats::YUVSource;
 
-    let file = std::fs::File::open(source)
+    let file = crate::storage::cloud_files::open(source)
         .with_context(|| format!("failed to open video: {}", source.display()))?;
     let size = file.metadata()?.len();
     let reader = std::io::BufReader::new(file);
@@ -1796,7 +1818,7 @@ fn generate_for_block_inner(
         //    whose embedded media isn't Rust-decodable. In the latter case
         //    the placeholder is temporary: Phase 2 will overwrite it with
         //    a WebView-decoded JPEG.
-        if !text_fallback.allows(&thumb_path) {
+        if !text_fallback.allows(&thumb_path) || media_left_in_cloud(block, resolver) {
             return ThumbSource::None;
         }
         let title = title_fields.display_title.as_deref();
@@ -1824,6 +1846,7 @@ fn generate_for_block_inner(
     if has_preview_intent
         && text_fallback.allows(&thumb_path)
         && !media_may_still_be_arriving(block, resolver)
+        && !media_left_in_cloud(block, resolver)
     {
         let title = title_fields
             .display_title
@@ -1847,6 +1870,17 @@ pub fn find_first_local_media(body: &str, ext_predicate: fn(&str) -> bool) -> Op
 
 pub fn find_first_local_media_any(body: &str) -> Option<(String, &'static str)> {
     preview_plan::find_first_local_media_any(body).map(|(src, kind)| (src, kind.as_str()))
+}
+
+/// Whether the cascade reached its text placeholder because media of the
+/// card is in iCloud: its read was refused, or this reader did not wait for
+/// it. The media is elsewhere, not missing nor undecodable, and the text of
+/// the card must not stand for it: the picture already there stays, a card
+/// without one waits for its media as `content_in_cloud`
+/// (SPEC_CLOUD_STORAGE.md, «Отказ чтения»). Until 17.11.2026 every refused
+/// read of a picture wrote the card's text over its thumbnail.
+fn media_left_in_cloud(block: &Block, resolver: &mut media_refs::MediaResolver<'_>) -> bool {
+    preview_plan::first_preview_source_in_cloud(block, resolver).is_some()
 }
 
 /// How long a card's declared-but-absent media counts as still on its way.
@@ -2493,6 +2527,55 @@ mod tests {
             },
             body: String::new(),
         }
+    }
+
+    /// «Отказ чтения» (SPEC_CLOUD_STORAGE.md): iCloud took the picture of a
+    /// card and refuses this Mac's reads of it (`EDEADLK`). Making the card's
+    /// thumbnail again writes nothing: the picture made while the file was
+    /// here stays, and no text placeholder takes its place. A sweep finds that
+    /// thumbnail fresh without reading the picture. Until 17.11.2026 the
+    /// refused read made the picture look undecodable, and the cascade wrote
+    /// the card's text over its thumbnail.
+    #[test]
+    fn a_picture_icloud_refuses_never_trades_its_thumbnail_for_text() {
+        use crate::storage::cloud_files::test_seam;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let picture = vault.root().join("photo.jpg");
+        create_test_image(&picture, 120, 80);
+        let block = make_media_block("photo", "photo.jpg");
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
+        let thumb = vault.thumb_path(&block.slug);
+        let made = std::fs::read(&thumb).unwrap();
+        test_seam::refuse_reads_of(&picture);
+
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::None);
+        assert_eq!(std::fs::read(&thumb).unwrap(), made);
+        assert_eq!(preview_origin(&thumb), Some(PreviewOrigin::Picture));
+
+    }
+
+    /// «Отказ чтения»: which picture an article's thumbnail depends on is
+    /// found by reading the head of each candidate. With a candidate in
+    /// iCloud the sweep keeps the thumbnail there and reads none of them, so
+    /// it neither brings the picture down on every return of the window nor
+    /// meets a refusal that names another candidate each time.
+    #[test]
+    fn the_freshness_of_an_article_with_a_picture_in_icloud_reads_no_picture() {
+        use crate::storage::cloud_files::test_seam;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let picture = vault.root().join("inside.jpg");
+        create_test_image(&picture, 120, 80);
+        let block = make_article("article", "Text\n\n![](inside.jpg)");
+        let source = vault.block_path(&block.slug);
+        std::fs::write(&source, "---\ntype: article\n---\nText\n\n![](inside.jpg)\n").unwrap();
+        assert_eq!(generate_for_block(&block, &vault), ThumbSource::Image);
+        test_seam::refuse_reads_of(&picture);
+
+        let thumb = vault.thumb_path(&block.slug);
+        assert!(is_thumb_fresh(&thumb, &source, &block, &vault));
+        assert_eq!(test_seam::reads_of(&picture), 0, "freshness read the picture in iCloud");
     }
 
     #[test]

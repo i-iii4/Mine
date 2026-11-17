@@ -58,6 +58,10 @@ pub struct AppState {
     /// Which page's note editor holds the focus, for the Edit menu
     /// (SPEC_EDITING.md, Л12).
     pub(crate) focused_editors: super::edit_menu::FocusedEditors,
+    /// The search connection of each open space and the number of each
+    /// tab's latest search (SPEC_SEARCH.md, «Соединение поиска», «Отмена
+    /// устаревшего запроса»).
+    pub(crate) search: super::search::SearchSessions,
 }
 
 impl AppState {
@@ -75,6 +79,7 @@ impl AppState {
             edit_sessions: super::edit_sessions::EditSessions::default(),
             edit_previews: super::note_edit::EditPreviews::default(),
             focused_editors: super::edit_menu::FocusedEditors::default(),
+            search: super::search::SearchSessions::default(),
         }
     }
 
@@ -221,7 +226,10 @@ pub(crate) fn read_owned_projection<T>(
     adopt_recovered_projection(app, &owned, recovered, value)
 }
 
-/// Search retains its idempotent derived-index maintenance within read ownership.
+/// Search on a connection of its own, with one corruption recovery: the way
+/// a search goes after its space's search connection met a damaged index
+/// (SPEC_SEARCH.md, «Соединение поиска»). Search retains its idempotent
+/// derived-index maintenance within read ownership.
 pub(crate) fn read_owned_search_projection<T>(
     app: &tauri::AppHandle,
     vault: &VaultLayout,
@@ -236,7 +244,8 @@ fn same_projection_owner(current: &VaultLayout, requested: &VaultLayout) -> bool
     current.root() == requested.root() && current.index_db_path() == requested.index_db_path()
 }
 
-fn current_read_owner(
+/// The layout the open space of `requested`'s folder serves now.
+pub(crate) fn current_read_owner(
     app: &tauri::AppHandle,
     requested: &VaultLayout,
 ) -> Result<VaultLayout, CommandError> {
@@ -371,6 +380,11 @@ pub enum CommandError {
     /// was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
     #[error("collection \"{collection}\" has no page; nothing was written")]
     CollectionNotFound { collection: String },
+    /// A newer search of the same tab took this one's place; its page has
+    /// already dropped the request and never shows this (SPEC_SEARCH.md,
+    /// «Отмена устаревшего запроса»).
+    #[error("the search was superseded by a newer one")]
+    SearchSuperseded,
     #[error("{0}")]
     Internal(String),
 }

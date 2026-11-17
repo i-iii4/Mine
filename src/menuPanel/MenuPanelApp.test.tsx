@@ -4,7 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { cardConnectSpec, cardMenuSpec, type CardMenuPicker } from "@/lib/cardMenuEntries";
 import { MENU_PANEL_TO_PAGE_EVENT } from "@/lib/menuPanelProtocol";
 import { MENU_SHADOW_FIELD_PX, menuSpecSize } from "@/lib/menuSpec";
-import type { MenuPanelPageRequest, MenuPanelToPage, MenuSpec } from "@/types";
+import { displayChoice, displaySpec } from "@/lib/displayMenu";
+import { mediaAssetSpec } from "@/lib/openCardMenus";
+import type { MenuPanelPageRequest, MenuPanelProgress, MenuPanelToPage, MenuSpec } from "@/types";
 import { MenuPanelApp } from "./MenuPanelApp";
 
 const PICKER: CardMenuPicker = { card: "card", selected: [], tags: [{ tag: "Web", count: 1 }], currentTag: null };
@@ -63,6 +65,11 @@ function invokes(name: string) {
   return vi.mocked(invoke).mock.calls.filter(([command]) => command === name).map(([, args]) => args);
 }
 
+/** The steps the page told of its menus, with its area then. */
+function steps(): [MenuPanelProgress["step"], number, number][] {
+  return (invokes("menu_panel_progress") as { progress: MenuPanelProgress }[]).map(({ progress }) => [progress.step, progress.area.width, progress.area.height]);
+}
+
 /** What the page asked of the backend, in the order it asked. */
 function requests(): MenuPanelPageRequest[] {
   return (invokes("menu_panel_request") as { request: MenuPanelPageRequest }[]).map(({ request }) => request);
@@ -101,6 +108,42 @@ describe("the menu panel's page", () => {
     expect(paint.sized_at).toBeLessThanOrEqual(paint.drawn_at);
     expect(paint.drawn_at).toBeLessThanOrEqual(paint.frame_at);
     expect(requests()).toEqual([]);
+    // Each step before the first frame is told, the menu named (МО40а).
+    const frame = frameOf(SPEC);
+    expect(steps()).toEqual([
+      ["received", frame.width, frame.height],
+      ["frame_requested", frame.width, frame.height],
+    ]);
+    const [{ progress }] = invokes("menu_panel_progress") as [{ progress: MenuPanelProgress }];
+    expect([progress.source, progress.menu]).toEqual([SOURCE, 1]);
+  });
+
+  it("tells each step of a menu that waits for its frame, the sizes it saw among them", () => {
+    render(<MenuPanelApp />);
+    window.innerWidth = 564;
+    const frame = frameOf(SPEC);
+    toPage(1, 1, opening());
+    resizeTo({ width: 300, height: 300 });
+    resizeTo(frame);
+    expect(steps()).toEqual([
+      ["received", 564, frame.height],
+      ["resized", 300, 300],
+      ["sized", frame.width, frame.height],
+      ["frame_requested", frame.width, frame.height],
+    ]);
+  });
+
+  it("writes a first frame's report the backend did not take to the log", async () => {
+    vi.mocked(invoke).mockImplementation((command: string) =>
+      command === "menu_panel_painted" ? Promise.reject(new Error("no such command")) : Promise.resolve(null),
+    );
+    render(<MenuPanelApp />);
+    toPage(1, 1, opening());
+    await waitFor(() =>
+      expect(
+        (invokes("plugin:log|log") as { message: string }[]).some(({ message }) => message.includes("the first frame's report did not reach the backend")),
+      ).toBe(true),
+    );
   });
 
   it("draws a menu only once its area is the frame the backend set for it", async () => {
@@ -217,6 +260,115 @@ describe("the menu panel's page", () => {
     // The page's answer comes back by the request's number.
     toPage(9, 2, { kind: "answer", request: 1, answer: { kind: "membership", made: true } });
     expect(screen.getByText("Read")).toBeTruthy();
+  });
+
+  it("asks for a command that keeps the menu open without its closing, and draws what comes of it", async () => {
+    const tags = [{ tag: "Web", count: 1 }];
+    const media = mediaAssetSpec({ tags, currentTag: null, copyError: null });
+    // The frame is the menu's at its largest: with the note of a failed copy.
+    const largest = mediaAssetSpec({ tags, currentTag: null, copyError: "Media file was not found." });
+    window.innerWidth = frameOf(largest).width;
+    window.innerHeight = frameOf(largest).height;
+    render(<MenuPanelApp />);
+    const first = opening(largest);
+    toPage(11, 1, first.kind === "open" ? { ...first, spec: media } : first);
+    fireEvent.click(screen.getByText("Copy Media"));
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    expect(requests()[0]).toEqual({ source: SOURCE, menu: 11, request: 1, action: { kind: "run", id: "copy-media" }, close: null });
+    toPage(11, 2, { kind: "answer", request: 1, answer: { kind: "done" } });
+    // The page the menu came from sends the menu anew, the note under the row.
+    toPage(11, 3, { kind: "update", spec: largest });
+    expect(screen.getByText("Media file was not found.").getAttribute("data-menu-note")).toBe("error");
+    expect(screen.getByText("Copy Media")).toBeTruthy();
+    // Every other command closes it with the choice.
+    fireEvent.click(screen.getByText("Reveal in Finder"));
+    await waitFor(() => expect(requests()).toHaveLength(2));
+    expect(requests()[1]).toEqual({ source: SOURCE, menu: 11, request: 2, action: { kind: "run", id: "reveal" }, close: "chosen" });
+  });
+
+  it("asks for a choice and a switch without closing, moves the tick with the next description, and lights a choice's row for a key", async () => {
+    const panel = (sort: string, wikilinks: boolean): MenuSpec => displaySpec([
+      displayChoice("sort", "Sort", sort, [{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }]),
+      [{ kind: "caption", text: "Links" }, { kind: "checkbox", id: "links.wikilinks", label: "Wikilinks", checked: wikilinks }],
+    ]);
+    const first = panel("newest", true);
+    window.innerWidth = frameOf(first).width;
+    window.innerHeight = frameOf(first).height;
+    render(<MenuPanelApp />);
+    toPage(12, 1, opening(first, true));
+    // A key opened it: the first row is a choice's, and takes the highlight.
+    expect(document.activeElement?.textContent).toBe("Newest first");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Oldest first" }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Wikilinks" }));
+    await waitFor(() => expect(requests()).toHaveLength(2));
+    expect(requests()).toEqual([
+      { source: SOURCE, menu: 12, request: 1, action: { kind: "choose", id: "sort", value: "oldest" }, close: null },
+      { source: SOURCE, menu: 12, request: 2, action: { kind: "check", id: "links.wikilinks", checked: false }, close: null },
+    ]);
+    expect(screen.getByRole("menuitemradio", { name: "Newest first" }).getAttribute("aria-checked")).toBe("true");
+    // The page the menu came from applied both and sends the menu anew.
+    toPage(12, 2, { kind: "update", spec: panel("oldest", false) });
+    expect(screen.getByRole("menuitemradio", { name: "Oldest first" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Wikilinks" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("asks for a choice and the menu's closing in one request where the menu is there for the one choice", async () => {
+    const select: MenuSpec = {
+      role: "action",
+      entries: [{ kind: "radio", id: "space", value: "mine", options: [{ value: "mine", label: "Mine" }, { value: "archive", label: "Archive" }], closes: true }],
+    };
+    window.innerWidth = frameOf(select).width;
+    window.innerHeight = frameOf(select).height;
+    render(<MenuPanelApp />);
+    toPage(13, 1, opening(select));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Archive" }));
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    expect(requests()).toEqual([
+      { source: SOURCE, menu: 13, request: 1, action: { kind: "choose", id: "space", value: "archive" }, close: "chosen" },
+    ]);
+    await waitFor(() => expect(screen.queryByRole("menuitemradio")).toBeNull());
+    expect(requests()).toHaveLength(1);
+  });
+
+  it("draws the list of spaces, keeps the keyboard in its field for a key, and closes on a space chosen but not on a folder shown", async () => {
+    const spaces: MenuSpec = {
+      role: "search",
+      entries: [{
+        kind: "widget",
+        id: "spaces",
+        widget: {
+          kind: "space_list",
+          spaces: [{ path: "/spaces/Archive", name: "Archive", tab: true }],
+          unavailable: [],
+          tabs: true,
+        },
+      }],
+    };
+    window.innerWidth = frameOf(spaces).width;
+    window.innerHeight = frameOf(spaces).height;
+    render(<MenuPanelApp />);
+    toPage(14, 1, opening(spaces, true));
+    // A key opened it: no row takes the keyboard from the field.
+    expect(document.activeElement?.getAttribute("role")).not.toBe("menuitem");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Archive in Finder" }));
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    expect(requests()[0]).toEqual({
+      source: SOURCE,
+      menu: 14,
+      request: 1,
+      action: { kind: "widget", id: "spaces", action: { kind: "reveal_space", path: "/spaces/Archive" } },
+      close: null,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    await waitFor(() => expect(requests()).toHaveLength(2));
+    expect(requests()[1]).toEqual({
+      source: SOURCE,
+      menu: 14,
+      request: 2,
+      action: { kind: "widget", id: "spaces", action: { kind: "switch_space", path: "/spaces/Archive", new_tab: false } },
+      close: "chosen",
+    });
+    await waitFor(() => expect(screen.queryByPlaceholderText("Search spaces...")).toBeNull());
   });
 
   it("lights the first row of a menu a key opened", () => {

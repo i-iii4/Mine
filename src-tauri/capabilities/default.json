@@ -6,7 +6,8 @@
     "tab-*",
     "tabbar-*",
     "settings",
-    "menu-panel"
+    "menu-panel",
+    "outside-window"
   ],
   "permissions": [
     "core:default",

@@ -34,6 +34,9 @@ describe("FadeText (DESIGN_SYSTEM.md, «Растворение кромок»)",
       expect(label).toHaveAttribute("data-fade-text");
       // One line that clips, never an ellipsis.
       expect(label).toHaveClass("min-w-0", "overflow-hidden", "whitespace-nowrap");
+      // Room above and below for a glyph taller than the line, taken back
+      // by the margin (scripts/fade-text-audit.mjs measures it in WebKit).
+      expect(label).toHaveClass("py-[0.25em]", "-my-[0.25em]");
       expect(label).not.toHaveClass("truncate", "text-ellipsis");
     }
     expect(short).not.toHaveAttribute("data-overflow");

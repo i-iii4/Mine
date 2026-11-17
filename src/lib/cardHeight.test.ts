@@ -956,3 +956,56 @@ describe("text under media on a narrow column (SPEC_NARROW_WINDOW.md, У14)", ()
     expect(computeCardHeight(post(null), 219, TEN_LINES)).toBe(CARD_BORDER + TOP_TEXT + 8 * 20 + BOTTOM_TEXT);
   });
 });
+
+// SPEC_GRID.md, «Кэш при карточке и продолжение раскладки»: the height last
+// computed for a row is kept by the row, for one column width, one
+// presentation and one set of word widths.
+describe("the height kept by the card's row", () => {
+  const widths = (scale: number): WordWidths => ({
+    title: [40 * scale, 55 * scale, 30 * scale],
+    preview: Array.from({ length: 30 }, (_, index) => (20 + (index % 7) * 6) * scale),
+    titleSpace: 3,
+    previewSpace: 3,
+    titleNoSpaceBefore: [false, false, false],
+    previewNoSpaceBefore: Array.from({ length: 30 }, () => false),
+  });
+  const row = () => lightBlock({
+    id: 1,
+    slug: "row",
+    title: "Three word title",
+    body: "Body",
+    preview_text: Array.from({ length: 30 }, (_, index) => `word${index}`).join(" "),
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "preview.jpg", width: 1200, height: 800,
+      preview_width: 640, preview_height: 480, tiles: [], overflow_count: 0,
+    }),
+  });
+
+  it("is the height of a row no cache has seen, whatever was asked of the row before", () => {
+    const block = row();
+    const narrow = widths(1);
+    const wide = widths(1.6);
+    const asks: Array<[number, WordWidths | null, "cards" | "media" | "media-only"]> = [
+      [240, narrow, "cards"], [240, narrow, "cards"], [320, narrow, "cards"], [240, narrow, "cards"],
+      [240, wide, "cards"], [240, null, "cards"], [240, narrow, "media"], [240, narrow, "media-only"],
+      [200, narrow, "cards"], [240, narrow, "cards"],
+    ];
+    const seen = new Set<number>();
+    for (const [columnWidth, wordWidths, show] of asks) {
+      const height = computeCardHeight(block, columnWidth, wordWidths, show);
+      expect(height).toBe(computeCardHeight({ ...block }, columnWidth, wordWidths && { ...wordWidths }, show));
+      seen.add(height);
+    }
+    // The asks differ: the cache answering one for another would show here.
+    expect(seen.size).toBeGreaterThan(3);
+  });
+
+  it("is not the height of the row a changed row replaced", () => {
+    const block = row();
+    const before = computeCardHeight(block, 240, null, "cards");
+    const changed = { ...block, preview_manifest: block.preview_manifest!.replace('"preview_height":480', '"preview_height":360') };
+    const after = computeCardHeight(changed, 240, null, "cards");
+    expect(after).toBe(before - Math.round(238 / (640 / 480)) + Math.round(238 / (640 / 360)));
+    expect(computeCardHeight(block, 240, null, "cards")).toBe(before);
+  });
+});

@@ -32,6 +32,8 @@ import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
 import { INDEXING_NOTICE_DELAY_MS } from "@/components/IndexingProgress";
 import { indexedBlock as completeIndexedBlock, lightBlock } from "@/test/blocks";
+import { feedPatchOf } from "@/test/feedBackend";
+import { noteOwnFeedChange, takeOwnFeedChanges } from "@/lib/feedChanges";
 
 // The search overlay shares the list_grid_blocks command: recent mode passes
 // SEARCH_OVERLAY_RECENT_LIMIT without a query, query mode passes a query string
@@ -64,7 +66,11 @@ function gridSnapshot(
 }
 
 const commandMocks = vi.hoisted(() => ({
-  getGridRows: vi.fn(),
+  // The partial read of the feed (SPEC_FRONTEND.md, «Обновление ленты»).
+  // Unless a test says otherwise it answers from what the feed's reads
+  // returned last (`shownFeed`), as the index would.
+  readFeedChanges: vi.fn(),
+  shownFeed: { blocks: [] as LightBlock[], generation: 1 },
   getVaultPath: vi.fn<() => Promise<string | null>>(),
   openVault: vi.fn<(path: string) => Promise<VaultOpenResult>>(),
   startVaultSync: vi.fn<() => Promise<boolean>>(),
@@ -80,6 +86,7 @@ const commandMocks = vi.hoisted(() => ({
   readClipboardPayload: vi.fn(async () => ({ kind: "empty" }) as const),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
   createChannel: vi.fn<(tag: string) => Promise<ChannelDto>>(),
+  createUntitledChannel: vi.fn<() => Promise<ChannelDto>>(),
   reorderChannels: vi.fn(async (_items: { tag: string; position: number }[]) => undefined),
   renameBlockFile: vi.fn(),
   checkBlockRename: vi.fn(),
@@ -154,12 +161,37 @@ vi.mock("@/lib/commands", () => ({
   recordStartupMilestone: commandMocks.recordStartupMilestone,
   startStartupMaintenance: commandMocks.startStartupMaintenance,
   sweepVaultThumbnails: commandMocks.sweepVaultThumbnails,
-  listGridBlocks: (place: TabLocation, ...rest: [offset?: number, limit?: number, order?: string]) => {
+  // The read's reason goes to the log only and is not part of what the
+  // tests hold the feed's reads to.
+  // The page asks for the cards after a place in the feed's order (`after`:
+  // the last card it holds). The tests' feeds are told by a card's number,
+  // so the mock hears the number of cards before the page: the place's card
+  // is the last one the feed's reads returned. The read's reason goes to the
+  // log only and is not part of what the tests hold the feed's reads to.
+  listGridBlocks: async (
+    place: TabLocation,
+    after: { saved_at: string; slug: string } | null,
+    limit?: number,
+    order?: string,
+  ) => {
     commandMocks.gridPlaces.push(place);
-    return commandMocks.listGridBlocks(place.kind === "collection" ? place.tag : undefined, ...rest);
+    const offset = after === null
+      ? 0
+      : commandMocks.shownFeed.blocks.findIndex((item) => item.slug === after.slug) + 1;
+    const tag = place.kind === "collection" ? place.tag : undefined;
+    const grid = await (order === undefined
+      ? commandMocks.listGridBlocks(tag, offset, limit)
+      : commandMocks.listGridBlocks(tag, offset, limit, order));
+    if (grid) {
+      commandMocks.shownFeed = {
+        blocks: offset ? [...commandMocks.shownFeed.blocks, ...grid.blocks] : grid.blocks,
+        generation: grid.generation,
+      };
+    }
+    return grid;
   },
   listCardAssociations: commandMocks.listCardAssociations,
-  getGridRows: commandMocks.getGridRows,
+  readFeedChanges: commandMocks.readFeedChanges,
   searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
     const grid = await commandMocks.listGridBlocks(tag, 0, limit, query);
     return {
@@ -173,6 +205,7 @@ vi.mock("@/lib/commands", () => ({
   },
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
   createChannel: commandMocks.createChannel,
+  createUntitledChannel: commandMocks.createUntitledChannel,
   reorderChannels: commandMocks.reorderChannels,
   deleteChannel: commandMocks.deleteChannel,
   reorderCollections: vi.fn(),
@@ -829,7 +862,20 @@ describe("AppWithVault", () => {
     commandMocks.gridPlaces.length = 0;
     gridScroll.atEnd = false;
     sidebarMockState.thumbnails = [];
-    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 1, blocks: [] });
+    commandMocks.shownFeed = { blocks: [], generation: 1 };
+    // The journal of the page's own commands is the page's: each test is a
+    // page of its own.
+    takeOwnFeedChanges();
+    commandMocks.readFeedChanges.mockImplementation(async (
+      path: string,
+      _place: TabLocation,
+      _order: string,
+      cards: number[],
+      end: number | null,
+    ) => feedPatchOf(commandMocks.shownFeed.blocks, cards, end, {
+      path,
+      generation: commandMocks.shownFeed.generation,
+    }));
     vi.mocked(isTauri).mockReturnValue(false);
     commandMocks.getTabBootstrap.mockResolvedValue(null);
     setTabVisible(true);
@@ -1093,7 +1139,12 @@ describe("AppWithVault", () => {
     });
   });
 
-  it("restarts from offset zero instead of mixing pagination generations", async () => {
+  // SPEC_STORAGE.md, «Страница ленты по ключу»: a page is read after a
+  // place in the feed's order, so a page newer than the list is taken as it
+  // is. Until 16.11.2026 pages were read by a card's number, and a page of
+  // another generation made the page read the whole feed again from its
+  // first card.
+  it("takes a page newer than the list without reading the feed again", async () => {
     const first = block(20, "generation-one");
     const second = block(21, "generation-two");
     const newerPage = deferred<GridSnapshot>();
@@ -1105,9 +1156,7 @@ describe("AppWithVault", () => {
       if (offset === 1) return newerPage.promise;
       expect(offset).toBe(0);
       firstPageReads += 1;
-      return firstPageReads === 1
-        ? gridSnapshot([first], 2, true, 1)
-        : gridSnapshot([first, second], 2, false, 2);
+      return gridSnapshot([first], 2, true, 1);
     });
 
     render(
@@ -1123,8 +1172,49 @@ describe("AppWithVault", () => {
     newerPage.resolve(gridSnapshot([second], 2, false, 2));
 
     await waitFor(() => {
-      expect(firstPageReads).toBe(2);
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^generation-one,generation-two$/);
+    });
+    expect(firstPageReads).toBe(1);
+  });
+
+  // A page read before a change the list already shows may hold cards as
+  // they were: it is dropped and asked again, not put after the list.
+  it("asks again for a page older than the list", async () => {
+    const first = block(20, "generation-one");
+    const kept = block(22, "kept-card");
+    const second = block(21, "generation-two");
+    const olderPage = deferred<GridSnapshot>();
+    let pageReads = 0;
+    commandMocks.listGridBlocks.mockImplementation(async (_tag, offset, limit, query) => {
+      if (isSearchOverlayQuery(limit, query)) return gridSnapshot([]);
+      if (offset === 0) return gridSnapshot([first, kept], 3, true, 5);
+      pageReads += 1;
+      return pageReads === 1 ? olderPage.promise : gridSnapshot([second], 3, false, 7);
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(pageReads).toBe(1));
+
+    // A ready preview is read into the list while the page is out: the list
+    // is now at a newer generation than the page was read at.
+    commandMocks.readFeedChanges.mockResolvedValue(feedPatchOf(
+      [{ ...first, preview_manifest: "ready" }, kept, second], [20], 22,
+      { path: "/vault", generation: 7 },
+    ));
+    fireEvent(window, new CustomEvent("thumb:updated", {
+      detail: { payload: { slug: "generation-one", is_text: false } },
+    }));
+    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("generation-one:ready"));
+
+    olderPage.resolve(gridSnapshot([second], 3, false, 6));
+
+    await waitFor(() => expect(pageReads).toBe(2));
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^generation-one,kept-card,generation-two$/);
     });
   });
 
@@ -4034,9 +4124,9 @@ describe("AppWithVault", () => {
   });
 
   // SPEC_CARD_PEEK.md, О1, О9, О16 (user's decision of 30.10.2026): the open
-  // card's buttons choose «Card view», stored as the Display panel stores it,
+  // card's buttons choose «Element view», stored as the Display panel stores it,
   // and the card follows it at once.
-  it("switches the open card between full page and its window by choosing «Card view»", async () => {
+  it("switches the open card between full page and its window by choosing «Element view»", async () => {
     reloadCardView();
     try {
       render(
@@ -4053,12 +4143,12 @@ describe("AppWithVault", () => {
       await waitFor(() => {
         expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
       });
-      // Full page by «Card view»: the right part holds the window, so the way
+      // Full page by «Element view»: the right part holds the window, so the way
       // to it stands between the menu and the close.
       const fullPage = document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]")!;
       const collapse = within(fullPage).getByRole("button", { name: "Collapse to window" });
       expect(within(fullPage).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
-        .toEqual(["Card actions", "Collapse to window", "Close"]);
+        .toEqual(["Element actions", "Collapse to window", "Close"]);
 
       fireEvent.click(collapse);
       expect(localStorage.getItem(CARD_VIEW_STORAGE_KEY)).toBe("peek");
@@ -5018,14 +5108,14 @@ describe("AppWithVault", () => {
 
     it("opens the name in the top row from the `⋯` of the full page", async () => {
       const header = await openFullPage();
-      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      pressMenu(within(header).getByRole("button", { name: "Element actions" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
       await expectFieldIn(header);
     });
 
     it("opens the name in the window's header from its `⋯`", async () => {
       const header = await openWindow();
-      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      pressMenu(within(header).getByRole("button", { name: "Element actions" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
       await expectFieldIn(header);
     });
@@ -5036,7 +5126,7 @@ describe("AppWithVault", () => {
       fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Rename…" }), { key: "Enter" });
       await expectFieldIn(header);
       // The menu's button is not left drawn as the keyboard's.
-      expect(within(header).getByRole("button", { name: "Card actions" })).not.toHaveAttribute("data-top-chrome-keyboard-focus");
+      expect(within(header).getByRole("button", { name: "Element actions" })).not.toHaveAttribute("data-top-chrome-keyboard-focus");
     });
 
     it("keeps the focus in the field when ⌘K and Enter chose the item in the window", async () => {
@@ -5056,7 +5146,7 @@ describe("AppWithVault", () => {
     it("saves on Enter through the same rename as a click on the name", async () => {
       commandMocks.renameBlockFile.mockResolvedValue({ old_slug: "alpha-block", new_slug: "gamma-block" });
       const header = await openFullPage();
-      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      pressMenu(within(header).getByRole("button", { name: "Element actions" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
       const field = await expectFieldIn(header);
       fireEvent.change(field, { target: { value: "gamma-block" } });
@@ -5066,7 +5156,7 @@ describe("AppWithVault", () => {
     });
 
     async function expectEscapeKeepsName(header: HTMLElement) {
-      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      pressMenu(within(header).getByRole("button", { name: "Element actions" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
       const field = await expectFieldIn(header);
       fireEvent.change(field, { target: { value: "gamma-block" } });
@@ -5441,53 +5531,46 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    it("creates from the New collection window the same way: no reorder, the place stays", async () => {
-      // The collection lists read after the creation hold its page.
-      const taxonomy = await commandMocks.listTaxonomySnapshot();
-      commandMocks.listTaxonomySnapshot.mockResolvedValue({
-        ...taxonomy,
-        tags: [{ tag: "gamma", count: 0 }, ...taxonomy.tags],
-        channels: [{ ...taxonomy.channels[0]!, tag: "gamma", position: -1, block_count: 0 }, ...taxonomy.channels],
-      });
-      // With the sidebar collapsed, ⇧⌘N opens the window.
+    // Decisions of 16.11.2026: `+` and ⇧⌘N make a collection at once, an
+    // untitled one with the filter empty, with no window or row to name it.
+    it("makes an untitled collection at once with ⇧⌘N, the sidebar closed too: no window, no reorder, the place stays", async () => {
+      commandMocks.createUntitledChannel.mockResolvedValue({ tag: "Untitled Collection" } as ChannelDto);
       sidebarResizeState.collapsed = true;
       await renderFeed();
 
       fireEvent.keyDown(window, { key: "N", code: "KeyN", metaKey: true, shiftKey: true });
-      fireEvent.change(await screen.findByRole("textbox", { name: "Collection name" }), {
-        target: { value: "gamma" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-      await waitFor(() => expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma"));
-      await waitFor(() => expect(screen.queryByRole("dialog", { name: "New collection" })).toBeNull());
-      // The lists read again, the feed stays where it was.
-      await waitFor(() => expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(2));
+      await waitFor(() => expect(commandMocks.createUntitledChannel).toHaveBeenCalledTimes(1));
+      expect(commandMocks.createChannel).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: "New collection" })).toBeNull();
       await act(async () => {
         await Promise.resolve();
       });
       expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
-      expect(topPlace("Everything")).toBeInTheDocument();
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    it("refuses a taken name in the New collection window by the one check, in the words of the dictionary", async () => {
+    it("makes the collection named in the filter with +, and opens the creation row for a taken name", async () => {
+      commandMocks.createChannel.mockResolvedValue({ tag: "gamma" } as ChannelDto);
       commandMocks.checkCollectionName.mockImplementation(async (_oldTag, name) => (
         name.toLowerCase() === "alpha" ? "A collection named \"alpha\" already exists." : null
       ));
-      sidebarResizeState.collapsed = true;
       await renderFeed();
+      const filter = screen.getByRole("textbox", { name: "Find or create collection" });
+      const plus = screen.getByRole("button", { name: "New Collection" });
 
-      fireEvent.keyDown(window, { key: "N", code: "KeyN", metaKey: true, shiftKey: true });
-      fireEvent.change(await screen.findByRole("textbox", { name: "Collection name" }), {
-        target: { value: "Alpha" },
-      });
+      fireEvent.change(filter, { target: { value: " gamma " } });
+      fireEvent.click(plus);
+      await waitFor(() => expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma"));
+      expect(commandMocks.createUntitledChannel).not.toHaveBeenCalled();
+      await waitFor(() => expect(filter).toHaveValue(""));
 
-      const dialog = await screen.findByRole("dialog", { name: "New collection" });
-      await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("A collection named \"alpha\" already exists."));
-      expect(dialog.textContent ?? "").not.toMatch(/channel/i);
-      expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+      commandMocks.createChannel.mockClear();
+      fireEvent.change(filter, { target: { value: "Alpha" } });
+      fireEvent.click(plus);
+      await waitFor(() => expect(document.querySelector("[data-sidebar-mock-creating]")).not.toBeNull());
       expect(commandMocks.createChannel).not.toHaveBeenCalled();
+      expect(filter).toHaveValue("Alpha");
       commandMocks.checkCollectionName.mockImplementation(async () => null);
     });
   });
@@ -6838,8 +6921,10 @@ describe("AppWithVault", () => {
   it("patches an article that initially had no picture without refetching the feed", async () => {
     const initial = block(1, "article");
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial, block(2, "unchanged")]));
-    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 2,
-      blocks: [{ ...initial, preview_manifest: "ready-picture" }, block(3, "deleted")] });
+    commandMocks.readFeedChanges.mockResolvedValue(feedPatchOf(
+      [{ ...initial, preview_manifest: "ready-picture" }, block(2, "unchanged")], [1], null,
+      { path: "/vault", generation: 2 },
+    ));
     render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
     const before = commandMocks.listGridBlocks.mock.calls.length;
@@ -6847,10 +6932,11 @@ describe("AppWithVault", () => {
       detail: { payload: { slug: "article", is_text: false } },
     }));
     await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("article:ready-picture"));
-    expect(commandMocks.getGridRows).toHaveBeenCalledTimes(1);
+    // Ten events for one card: one read of its row, by its id.
+    expect(commandMocks.readFeedChanges).toHaveBeenCalledTimes(1);
+    expect(commandMocks.readFeedChanges).toHaveBeenCalledWith("/vault", { kind: "everything" }, "newest", [1], null, "preview");
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(before);
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    expect(screen.queryByText("Open deleted")).not.toBeInTheDocument();
   });
 
   // SPEC_THUMBNAILS.md, «Свои записи Mine»: a command that dropped the first
@@ -6858,26 +6944,23 @@ describe("AppWithVault", () => {
   // feed takes the card's new tile list from the index and a new version for
   // the tile addresses: the tiles are named by place, so the old address
   // would show the browser's copy of the dropped picture.
-  // SPEC_CARD_MERGE.md, «State Flow»: the tab that merged reads the feed as
-  // the merge left it, whatever order the merge's news and its answer arrive
-  // in: the merged card is in, its cards are out.
+  // SPEC_CARD_MERGE.md, «State Flow»: the tab that merged reads the cards
+  // the merge named, the merged card and its cards, and not the feed: the
+  // merged card is in, its cards are out.
   it("shows the merged card and not its cards once its merge is made", async () => {
     const alpha = block(1, "alpha-block");
     const beta = block(2, "beta-block");
     const gamma = block(3, "gamma-block");
     const merged = block(4, "alpha-block — merged");
-    let mergedYet = false;
-    commandMocks.listGridBlocks.mockImplementation(async () => (
-      mergedYet ? gridSnapshot([merged, gamma], 2, false, 9) : gridSnapshot([alpha, beta, gamma], 3, false, 5)
-    ));
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([alpha, beta, gamma], 3, false, 5));
     commandMocks.mergeBlocks.mockImplementation(async () => {
-      mergedYet = true;
-      const send = (name: string, payload: unknown) => fireEvent(window, new CustomEvent(name, { detail: { payload } }));
-      send("block:added", { slug: merged.slug, tags: [], is_text: false });
-      send("thumb:updated", { slug: merged.slug, is_text: false });
-      send("block:removed", { slug: alpha.slug, tags: [] });
-      send("block:removed", { slug: beta.slug, tags: [] });
-      send("vault-changed", { path: "/vault", renames: [] });
+      commandMocks.shownFeed = { blocks: [merged, gamma], generation: 9 };
+      // The command's answer names the cards it wrote and removed, and its
+      // own event tells that the merged card's picture is ready.
+      noteOwnFeedChange([1, 2, 4]);
+      fireEvent(window, new CustomEvent("thumb:updated", {
+        detail: { payload: { slug: merged.slug, is_text: false } },
+      }));
       return {
         block: indexedBlock(4, merged.slug),
         merged_slug: merged.slug,
@@ -6890,8 +6973,11 @@ describe("AppWithVault", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Merge the first two cards" }));
 
+    const feedReads = commandMocks.listGridBlocks.mock.calls.length;
     await waitFor(() => expect(commandMocks.mergeBlocks).toHaveBeenCalledWith(["alpha-block", "beta-block"]));
     await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block — merged,gamma-block$/));
+    expect(commandMocks.readFeedChanges).toHaveBeenCalledWith("/vault", { kind: "everything" }, "newest", [1, 2, 4], null, "own_command");
+    expect(commandMocks.listGridBlocks.mock.calls.length).toBe(feedReads);
   });
 
   it("follows a card's new tile list when its pictures were rebuilt", async () => {
@@ -6913,7 +6999,7 @@ describe("AppWithVault", () => {
     const before = { ...block(1, "Cards/Gallery"), preview_manifest: tiles("image 1", "image 2") };
     const after = { ...before, preview_manifest: tiles("image 2", "image 3") };
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([before]));
-    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 2, blocks: [after] });
+    commandMocks.readFeedChanges.mockResolvedValue(feedPatchOf([after], [1], null, { path: "/vault", generation: 2 }));
     render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("Media/image 1.jpg"));
     expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("Cards/Gallery=0");
@@ -6927,7 +7013,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("Cards/Gallery=1");
     });
     expect(screen.getByTestId("grid-previews")).not.toHaveTextContent("Media/image 1.jpg");
-    expect(commandMocks.getGridRows).toHaveBeenCalledWith("/vault", ["Cards/Gallery"]);
+    expect(commandMocks.readFeedChanges).toHaveBeenCalledWith("/vault", { kind: "everything" }, "newest", [1], null, "preview");
   });
 
   it("reads again a new card whose preview landed while the feed read was in flight", async () => {
@@ -6948,30 +7034,38 @@ describe("AppWithVault", () => {
     fireEvent(window, new CustomEvent("thumb:updated", {
       detail: { payload: { path: "/vault", slug: "restored-video", is_text: false } },
     }));
-    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 3,
-      blocks: [{ ...restored, preview_manifest: "square-poster", width: 1080, height: 1080 }] });
+    commandMocks.readFeedChanges.mockResolvedValue(feedPatchOf(
+      [existing, { ...restored, preview_manifest: "square-poster", width: 1080, height: 1080 }], [2], null,
+      { path: "/vault", generation: 3 },
+    ));
     await act(async () => finishRead(gridSnapshot([existing, restored], 2, false, 2)));
 
     await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("restored-video:square-poster:1080"));
-    expect(commandMocks.getGridRows).toHaveBeenCalledWith("/vault", ["restored-video"]);
+    expect(commandMocks.readFeedChanges).toHaveBeenCalledWith("/vault", { kind: "everything" }, "newest", [2], null, "preview");
   });
 
   it("ignores preview rows from another space or an older revision", async () => {
     const initial = block(1, "article");
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial], 1, false, 5));
-    commandMocks.getGridRows
-      .mockResolvedValueOnce({ path: "/other", generation: 9, blocks: [{ ...initial, preview_manifest: "wrong-space" }] })
-      .mockResolvedValueOnce({ path: "/vault", generation: 4, blocks: [{ ...initial, preview_manifest: "old" }] });
+    commandMocks.readFeedChanges
+      .mockResolvedValueOnce(feedPatchOf([{ ...initial, preview_manifest: "wrong-space" }], [1], null, { path: "/other", generation: 9 }))
+      .mockResolvedValueOnce(feedPatchOf([{ ...initial, preview_manifest: "old" }], [1], null, { path: "/vault", generation: 4 }));
     render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:1"));
     for (let i = 1; i <= 2; i++) {
       fireEvent(window, new CustomEvent("thumb:updated", { detail: { payload: { slug: "article", is_text: false } } }));
-      await waitFor(() => expect(commandMocks.getGridRows).toHaveBeenCalledTimes(i));
+      await waitFor(() => expect(commandMocks.readFeedChanges).toHaveBeenCalledTimes(i));
     }
+    // An answer older than the list is not put into it: the feed is read in
+    // full instead, and still shows the card as the index holds it.
+    await waitFor(() => expect(commandMocks.listGridBlocks.mock.calls.length).toBeGreaterThan(1));
     expect(screen.getByTestId("grid-previews")).toHaveTextContent("article:none");
   });
 
-  it("keeps a newer preview when an older full-route response completes later", async () => {
+  // The reads of the list go one at a time (SPEC_FRONTEND.md, «Обновление
+  // ленты»): a preview that became ready while a full read is out is read
+  // after that read, so the older full answer never lands over it.
+  it("reads a preview that became ready during a full read after that read", async () => {
     const initial = block(1, "article");
     commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([initial]));
     render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
@@ -6980,12 +7074,16 @@ describe("AppWithVault", () => {
     commandMocks.listGridBlocks.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
     fireEvent(window, new CustomEvent("vault-changed", { detail: { payload: { path: "/vault" } } }));
     await waitFor(() => expect(resolve).toBeDefined(), { timeout: 3000 });
-    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 3,
-      blocks: [{ ...initial, preview_manifest: "new-preview" }] });
+    commandMocks.readFeedChanges.mockResolvedValue(feedPatchOf(
+      [{ ...initial, preview_manifest: "new-preview" }, block(2, "added")], [1], null,
+      { path: "/vault", generation: 3 },
+    ));
     fireEvent(window, new CustomEvent("thumb:updated", { detail: { payload: { path: "/vault", slug: "article", is_text: false } } }));
-    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("new-preview"));
+    // The full read is out: the card's row waits for it.
+    await act(async () => { await new Promise((wait) => setTimeout(wait, 100)); });
+    expect(commandMocks.readFeedChanges).not.toHaveBeenCalled();
     await act(async () => resolve(gridSnapshot([initial, block(2, "added")], 2, false, 2)));
-    expect(screen.getByTestId("grid-previews")).toHaveTextContent("new-preview");
+    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("new-preview"));
     expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
@@ -6997,7 +7095,7 @@ describe("AppWithVault", () => {
     fireEvent(window, new CustomEvent("thumb:updated", { detail: { payload: { path: "/other", slug: "article", is_text: false } } }));
     fireEvent(window, new CustomEvent("vault-changed", { detail: { payload: { path: "/vault", preview_only: true } } }));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2100)); });
-    expect(commandMocks.getGridRows).not.toHaveBeenCalled();
+    expect(commandMocks.readFeedChanges).not.toHaveBeenCalled();
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(before);
     expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("article=0");
   });
@@ -7016,7 +7114,7 @@ describe("AppWithVault", () => {
       height: 600,
       media_dimensions: "{\"new-image.jpg\":[1586,600]}",
     };
-    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 10, blocks: [ready] });
+    commandMocks.readFeedChanges.mockResolvedValue(feedPatchOf([ready], [1], null, { path: "/vault", generation: 10 }));
     let gridRequest = 0;
     commandMocks.listGridBlocks.mockImplementation(async () => {
       const current = gridRequest === 0 ? initial : ready;
@@ -7048,7 +7146,7 @@ describe("AppWithVault", () => {
     );
 
     await waitFor(() => {
-      expect(commandMocks.getGridRows).toHaveBeenCalledWith("/vault", ["new-image"]);
+      expect(commandMocks.readFeedChanges).toHaveBeenCalledWith("/vault", { kind: "everything" }, "newest", [1], null, "preview");
       expect(commandMocks.listGridBlocks.mock.calls.length).toBe(gridCallsBefore);
       expect(screen.getByTestId("grid-previews")).toHaveTextContent("1586");
       expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent(
@@ -8138,12 +8236,13 @@ describe("AppWithVault", () => {
         expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 360, collapsed: true });
       });
 
-      it("⇧⌘N takes the picture away and opens New collection", async () => {
+      it("⇧⌘N takes the picture away and makes a collection", async () => {
+        commandMocks.createUntitledChannel.mockResolvedValue({ tag: "Untitled Collection" } as ChannelDto);
         sidebarResizeState.collapsed = true;
         const overlay = await openPicture();
         fireEvent.keyDown(overlay, { key: "N", code: "KeyN", metaKey: true, shiftKey: true });
         expect(viewer()).toBeNull();
-        expect(await screen.findByRole("dialog", { name: "New collection" })).toBeInTheDocument();
+        await waitFor(() => expect(commandMocks.createUntitledChannel).toHaveBeenCalledTimes(1));
       });
 
       it("⇧⌘O asks for a folder over the picture, which goes only with the space", async () => {

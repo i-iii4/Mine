@@ -3,9 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardConnectMenu, CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
-import { CardTagMenu } from "./CardContextMenu";
 import { ActionFailureNoticeStack } from "./ActionFailureNotices";
-import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { getBlock, startWindowDrag } from "@/lib/commands";
 import { clearActionFailures } from "@/lib/actionFailures";
 import { offerEditorTableMenu, withdrawEditorTableMenu } from "@/lib/editorTableMenu";
@@ -111,21 +109,20 @@ describe("CardHoverMenu", () => {
   it("shows the card's collections the feed knows in the right-click menu while the read answers late", async () => {
     vi.mocked(getBlock).mockImplementation(() => new Promise<never>(() => {}));
     render(
-      <ContextMenu>
-        <ContextMenuTrigger>card</ContextMenuTrigger>
-        <CardTagMenu
-          block={{ ...makeBlock(), collections: ["alpha"] }}
-          vaultPath="/vault"
-          tags={[{ tag: "alpha", count: 1 }]}
-          currentTag="alpha"
-          onToggleTag={vi.fn()}
-          onCreateAndAssign={vi.fn()}
-          onRequestRename={vi.fn()}
-          onRequestDelete={vi.fn()}
-        />
-      </ContextMenu>,
+      <CardPointMenu
+        block={{ ...makeBlock(), collections: ["alpha"] }}
+        x={120}
+        y={80}
+        openRequestSequence={1}
+        vaultPath="/vault"
+        tags={[{ tag: "alpha", count: 1 }]}
+        currentTag="alpha"
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
     );
-    fireEvent.contextMenu(screen.getByText("card"));
 
     expect(await screen.findByText("Disconnect from “alpha”")).toBeInTheDocument();
   });
@@ -284,7 +281,7 @@ describe("CardHoverMenu", () => {
     expect(plus).toHaveClass("bottom-2", "right-2", "group-hover:opacity-100", "opacity-0");
     expect(within(plus as HTMLElement).getByRole("button", { name: "Connect" })).toBeInTheDocument();
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
-    expect(screen.getByRole("button", { name: "Card actions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Element actions" })).toBeInTheDocument();
   });
 
   it("reports when a pointer menu holds the bottom row, the card lift's pin", async () => {
@@ -474,7 +471,7 @@ describe("CardHoverMenu", () => {
       />,
     );
 
-    const trigger = screen.getByRole("button", { name: "Card actions" });
+    const trigger = screen.getByRole("button", { name: "Element actions" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(trigger);
 
@@ -547,7 +544,6 @@ describe("CardHoverMenu", () => {
       left: "144px",
       top: "188px",
     });
-    expect(document.querySelector("[data-slot='context-menu-content']")).not.toBeInTheDocument();
   });
 
   it("captures the first outside click on CardPointMenu before it reaches the app", async () => {
@@ -608,7 +604,7 @@ describe("CardHoverMenu", () => {
       </>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Card actions" }));
+    await user.click(screen.getByRole("button", { name: "Element actions" }));
     expect(await screen.findByText("Rename…")).toBeInTheDocument();
     await user.hover(screen.getByText("Elsewhere"));
 
@@ -704,7 +700,7 @@ describe("CardHoverMenu", () => {
   // WebKit draws the ring on any button a script focuses when no click focused
   // something before it, and on the focused button at any key after that
   // (DESIGN_SYSTEM.md, «Своя рамка фокуса у каждого элемента»).
-  describe.each(["Card actions", "Connect"])("the focus after the menu of its %s button", (label) => {
+  describe.each(["Element actions", "Connect"])("the focus after the menu of its %s button", (label) => {
     const renderCard = () => render(
       <CardHoverMenu
         block={makeBlock()}
@@ -775,7 +771,7 @@ describe("CardHoverMenu", () => {
       return onActionsPinnedChange;
     };
     const openAndClose = async () => {
-      fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Element actions", hidden: true }), { button: 0, ctrlKey: false });
       await waitFor(() => expect(document.querySelector('[data-radix-menu-content][data-state="open"]')).not.toBeNull());
       fireEvent.keyDown(document.querySelector("[data-radix-menu-content]")!, { key: "Escape" });
       await waitFor(() => expect(document.querySelector("[data-radix-menu-content]")).toBeNull());
@@ -859,7 +855,7 @@ describe("CardHoverMenu", () => {
         onRequestDelete={vi.fn()}
       />,
     );
-    const trigger = screen.getByRole("button", { name: "Card actions" });
+    const trigger = screen.getByRole("button", { name: "Element actions" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(trigger);
     const submenu = await screen.findByText("Table");
@@ -883,7 +879,7 @@ describe("CardHoverMenu", () => {
         onRequestDelete={vi.fn()}
       />,
     );
-    const trigger = screen.getByRole("button", { name: "Card actions" });
+    const trigger = screen.getByRole("button", { name: "Element actions" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(trigger);
     await screen.findByText("Rename…");

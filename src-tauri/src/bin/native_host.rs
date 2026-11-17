@@ -2476,12 +2476,12 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
         })
         .unwrap_or_default();
     if collection_page_on_disk(vault, &tag, indexed.get(&tag).map(String::as_str)) {
-        return refuse(format!("channel already exists: {tag}"));
+        return refuse(format!("collection already exists: {tag}"));
     }
 
     let existing = match files::scan_vault_file_paths(vault) {
         Ok(existing) => existing,
-        Err(e) => return refuse(format!("failed to inspect existing vault files: {e}")),
+        Err(e) => return refuse(format!("failed to inspect existing space files: {e}")),
     };
     let tag = match mine_core::save::select_unique_file_stem(&tag, "md", &existing) {
         Ok(tag) => tag,
@@ -2489,7 +2489,7 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
     };
     let mut channel = match Channel::new(&tag, created_at) {
         Ok(channel) => channel,
-        Err(e) => return refuse(format!("invalid channel: {e}")),
+        Err(e) => return refuse(format!("invalid collection: {e}")),
     };
     let indexed_position = conn.as_ref().map(index::new_channel_position).transpose();
     channel.position = match indexed_position {
@@ -2503,7 +2503,7 @@ fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
 
     let block = channel_to_block(vault, &channel);
     if let Err(e) = files::write_new_block_file(vault, &block) {
-        return refuse(format!("failed to write channel file: {e}"));
+        return refuse(format!("failed to write collection page: {e}"));
     }
     // The page enters the identity history with the app's next pass, as a
     // Save's card and any note written beside Mine do: enrolling it here read

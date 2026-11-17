@@ -23,18 +23,14 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { NavLink, useLocation } from "react-router";
-import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDndContext, useDraggable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { revealInFinder } from "@/lib/systemActions";
+import { collectionRowMenuItemId, collectionRowSpec } from "@/lib/collectionRowMenu";
+import { SpecPointMenu, type SpecPointMenuHandle } from "./SpecPointMenu";
 import { bindingLabel } from "@/lib/commandBinding";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,7 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
+import type { IndexedBlock, LightBlock, MenuAction, MenuAnswer, TagCount, PreviewCard } from "@/types";
 import type { MembershipAnswer } from "@/components/CollectionPicker";
 import { collectionPagePath, getBlock } from "@/lib/commands";
 import { collectionNameRefusal } from "@/hooks/useCollectionNameRefusal";
@@ -96,20 +92,18 @@ import {
   sidebarTileFaceClass,
   type CollectionPreviewContent,
 } from "./CollectionHoverPreview";
-import { HOVER_PREVIEW_WINDOW_WIDTH_PX, hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
+import { HOVER_PREVIEW_WINDOW_WIDTH_PX, hoverPreviewBesidePanel, hoverPreviewOutsideBesidePanel } from "@/lib/hoverPreviewWindow";
+import { outsideCardContent, outsideCollectionContent, outsideLook } from "@/lib/outsidePreviewSource";
 import {
-  MicroPreviewThumbnail,
   microPreviewFromPreviewCard,
   microPreviewImageClass,
   useMicroPreviewPicture,
   type MicroPreviewPicture,
   type MicroPreviewModel,
 } from "./MicroPreviewThumbnail";
-import { CHANNEL_ICON_CARD_CLASS, ChannelIcon } from "./ChannelIcon";
-import { CHANNEL_ICON_MAX_CARDS, channelIconCardStyle, channelIconSpringStyle } from "@/lib/channelIcon";
 import { observeSidebarListMorph } from "@/lib/sidebarListMorph";
 import { observeSidebarLook } from "@/lib/sidebarLook";
-import { observeSidebarRowsMorph } from "@/lib/sidebarRowsMorph";
+import { springStyle } from "@/lib/spring";
 
 /// Where a part of the sidebar laid out by its width takes it from: beside
 /// the feed the sidebar's width, written on the part itself
@@ -163,9 +157,8 @@ const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 /// The plate belongs to the cell, not to the count's text alignment.
 const SIDEBAR_ROW_ACTION_BUTTON_INSET = SIDEBAR_ROW_ACTION_BUTTON_GAP;
 /// Where Connect and Connected stand from the row's right edge, the meta
-/// zone's edge. A compact item stands them as shadcn stands
-/// `SidebarMenuAction`, `right-1` (`--sidebar-action-inset`, global.css,
-/// «Compact rows»).
+/// zone's edge. The List gives its own inset (`--sidebar-action-inset`,
+/// global.css, «List sidebar»).
 const SIDEBAR_ROW_META_ACTION_RIGHT = `var(--sidebar-action-inset, ${SIDEBAR_ROW_ACTION_BUTTON_INSET}px)`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
@@ -224,8 +217,7 @@ const SIDEBAR_NAME_CELL_PAD = `calc(var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OP
 /// inside the name's own zone wherever the column stands.
 const SIDEBAR_NAME_CLEAR_TAIL = SIDEBAR_PREVIEW_DIVIDER_GAP - SIDEBAR_NAME_OPTICAL_SHIFT_PX;
 /// The name's dissolve, published as a custom property that global.css
-/// applies (`[data-sidebar-name-cell][data-text-clipped]`), the compact
-/// item's count with it («Compact rows»).
+/// applies (`[data-sidebar-name-cell][data-text-clipped]`).
 const SIDEBAR_ROW_TEXT_MASK_STYLE = {
   "--sidebar-name-mask": String(
     createRightFadeMaskStyle(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH, SIDEBAR_NAME_CLEAR_TAIL).maskImage,
@@ -348,6 +340,10 @@ interface SidebarProps {
   onOpenBlock?: (block: IndexedBlock) => void;
   onOpenCardMenu?: (block: LightBlock | IndexedBlock, point: CardMenuPoint) => void;
   hoverPreviewFrozen?: boolean;
+  /// The collection row under cards dragged in another window of the same
+  /// space (`tag:<name>`): it looks as under this page's own drag
+  /// (SPEC_OUTSIDE_WINDOW.md, ПК4).
+  remoteDropRowKey?: string | null;
   onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign?: (tag: string, blockSlug: string) => void;
   onRequestRename?: (block: LightBlock) => void;
@@ -360,7 +356,7 @@ interface SidebarProps {
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
   /** The row holding the keyboard's focus (SPEC_KEYBOARD.md, «Sidebar»); the page
-   *  owns it. Not the focus above: this one lights no name and opens no stack. */
+   *  owns it. Not the focus above: this one lights no name. */
   keyboardFocusRowKey?: string | null;
   searchQuery?: string;
   /** ⌘-click on a row opens its route in a new tab, ⇧⌘-click in a new window
@@ -386,23 +382,14 @@ interface SidebarProps {
  *  a prop through the row components. */
 const SidebarOpenElsewhereContext = createContext<((to: string, newWindow: boolean) => void) | null>(null);
 
-/** The row a compact item's stack opens for (PLAN 50.36; user's decision
- *  of 22.10.2026: at once, with no speed gate). For the pointer it is the row
- *  under it, the same answer that lights the name (С7.10). The
- *  keyboard, a drop target and a name being typed answer at once
- *  (`immediate`). The wide rows' names keep answering the raw pointer at once
- *  (С7.10, user's decision of 02.10.2026). A context, not a prop: only the
- *  rows' frames read it. */
-type SidebarAnswerRows = {
-  pointer: string | null;
-  immediate: string | null;
+/** The row holding the keyboard's focus (SPEC_KEYBOARD.md, М5). A context,
+ *  not a prop: only the rows' frames read it. */
+type SidebarKeyboardFocusRow = {
   keyboardFocus: string | null;
   /** Over an open card that row shows its buttons as under the pointer (SPEC_KEYBOARD.md, М5). */
   keyboardFocusShowsActions: boolean;
 };
-const SidebarAnswerRowContext = createContext<SidebarAnswerRows>({
-  pointer: null,
-  immediate: null,
+const SidebarKeyboardFocusRowContext = createContext<SidebarKeyboardFocusRow>({
   keyboardFocus: null,
   keyboardFocusShowsActions: false,
 });
@@ -440,6 +427,7 @@ const SidebarCore = memo(function SidebarCore({
   onOpenBlock,
   onOpenCardMenu,
   hoverPreviewFrozen = false,
+  remoteDropRowKey = null,
   onNavClick,
   onCardClose,
   onScrollToTop,
@@ -557,6 +545,14 @@ const SidebarCore = memo(function SidebarCore({
       () => navRef.current?.closest("[data-sidebar-panel]")?.getBoundingClientRect() ?? null,
       "after",
     ),
+    // No room beside the panel inside the window, as over the feed in a
+    // narrow window: the window stands outside (SPEC_OUTSIDE_WINDOW.md, ПН2).
+    outside: hoverPreviewOutsideBesidePanel({
+      panel: () => navRef.current?.closest("[data-sidebar-panel]")?.getBoundingClientRect() ?? null,
+      side: "after",
+      look: () => (vaultPath ? outsideLook(vaultPath, thumbsRootPath ?? null) : null),
+      content: (content) => (content.kind === "card" ? outsideCardContent(content.block) : outsideCollectionContent(content)),
+    }),
     onShown: setHoveredPreview,
   });
   // The row under the pointer, set on every move without delay or speed gate.
@@ -596,19 +592,13 @@ const SidebarCore = memo(function SidebarCore({
   }, []);
 
   // The list's look follows its width, and its rows move as it crosses the
-  // compact threshold: between the wide table and the List
-  // (sidebarListMorph.ts), or the narrow table, postponed
-  // (sidebarRowsMorph.ts). Before the first paint, so no frame shows the
+  // compact threshold, between the wide table and the List
+  // (sidebarListMorph.ts). Before the first paint, so no frame shows the
   // wrong look.
   useLayoutEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
-    const stopList = observeSidebarListMorph(nav);
-    const stopTable = observeSidebarRowsMorph(nav);
-    return () => {
-      stopList();
-      stopTable();
-    };
+    return observeSidebarListMorph(nav);
   }, []);
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow).
@@ -699,17 +689,14 @@ const SidebarCore = memo(function SidebarCore({
     : isCreatingChannel
       ? "create-channel"
       : null;
-  // The create row exists only while it has a job: naming a new collection,
-  // or taking a dragged card to found one. The command itself lives in the
-  // row above the list and on ⇧⌘N.
-  const showCreateRow = isCreatingChannel || isDropDragging;
+  // The create row exists only while a refused name is typed again in it
+  // (`+`, ⇧⌘N or Enter with a taken name in the filter). A drag never shows
+  // it: a card dropped on the filter founds a collection (decision of
+  // 16.11.2026).
+  const showCreateRow = isCreatingChannel;
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
-  const overId = dropOverId;
-  const dropOverRowKey = overId?.startsWith("tag:")
-    ? overId
-    : overId === "create-channel"
-      ? "create-channel"
-      : null;
+  const overId = dropOverId ?? remoteDropRowKey;
+  const dropOverRowKey = overId?.startsWith("tag:") ? overId : null;
   const effectiveSidebarRowFocusKey = editingRowKey ?? dropOverRowKey ?? (sidebarRowFocusMode
     ? sidebarRowFocusKey
     : activePreviewRowKey);
@@ -789,21 +776,15 @@ const SidebarCore = memo(function SidebarCore({
       deactivateSidebarRowFocusMode();
       return;
     }
-    setRowFocusFromPointer(false);
     activateSidebarRowFocus(rowKey);
   }, [activateSidebarRowFocus, deactivateSidebarRowFocusMode]);
 
-  // The focused row came from the pointer, not the keyboard: a compact item
-  // then opens its stack on the engine's answer instead (SidebarAnswerRowContext).
-  const [rowFocusFromPointer, setRowFocusFromPointer] = useState(false);
   applyPointerRowFocusRef.current = (rowKey) => {
     if (rowKey !== null) {
       pointerRowFocusRef.current = true;
-      setRowFocusFromPointer(true);
       activateSidebarRowFocus(rowKey);
     } else if (pointerRowFocusRef.current) {
       pointerRowFocusRef.current = false;
-      setRowFocusFromPointer(false);
       deactivateSidebarRowFocusMode();
     }
   };
@@ -932,7 +913,6 @@ const SidebarCore = memo(function SidebarCore({
 
     clearSidebarKeyboardFocusTimer();
     pointerRowFocusRef.current = false;
-    setRowFocusFromPointer(false);
     activateSidebarRowFocus(rowKey);
     sidebarKeyboardFocusTimerRef.current = window.setTimeout(() => {
       sidebarKeyboardFocusTimerRef.current = null;
@@ -1036,17 +1016,12 @@ const SidebarCore = memo(function SidebarCore({
     clearSidebarRowSwitchFrame();
   }, [clearSidebarRowSwitchFrame]);
 
-  const immediateAnswerRowKey = editingRowKey
-    ?? dropOverRowKey
-    ?? (sidebarRowFocusMode && !rowFocusFromPointer ? sidebarRowFocusKey : null);
-  const answerRows = useMemo<SidebarAnswerRows>(
+  const keyboardFocusRow = useMemo<SidebarKeyboardFocusRow>(
     () => ({
-      pointer: intentRowKey,
-      immediate: immediateAnswerRowKey,
       keyboardFocus: keyboardFocusRowKey,
       keyboardFocusShowsActions: isLinkEditorActive,
     }),
-    [intentRowKey, immediateAnswerRowKey, isLinkEditorActive, keyboardFocusRowKey],
+    [isLinkEditorActive, keyboardFocusRowKey],
   );
 
   return (
@@ -1092,7 +1067,7 @@ const SidebarCore = memo(function SidebarCore({
       >
         <HoverIntentDragWatch intent={rowIntent} />
 
-        <SidebarAnswerRowContext.Provider value={answerRows}>
+        <SidebarKeyboardFocusRowContext.Provider value={keyboardFocusRow}>
         <div className="relative" data-sidebar-rows>
           <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
             <span
@@ -1144,11 +1119,9 @@ const SidebarCore = memo(function SidebarCore({
               data-motion-key={isCreatingChannel && isCreatingChannelByKey ? "" : undefined}
             ><div>
             <NewChannelRow
-              isEditing={isCreatingChannel}
-              // A filter typed before the plus becomes the new name's start.
+              // The refused name typed in the filter is the field's start.
               defaultName={searchQuery.trim()}
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
-              onStartCreate={() => onSetCreatingChannel(true)}
               edit={createEdit}
             />
             </div></div>
@@ -1203,7 +1176,7 @@ const SidebarCore = memo(function SidebarCore({
           </SortableContext>
 
         </div>
-        </SidebarAnswerRowContext.Provider>
+        </SidebarKeyboardFocusRowContext.Provider>
 
 
       </nav>
@@ -1323,10 +1296,9 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     assignRef(forwardedRef, node);
     nodeRef?.(node);
   }, [forwardedRef, nodeRef]);
-  const answerRows = useContext(SidebarAnswerRowContext);
-  const isAnswerRow = rowKey === answerRows.pointer || rowKey === answerRows.immediate;
+  const keyboardFocusRow = useContext(SidebarKeyboardFocusRowContext);
   // A name being typed holds the keyboard in its field; the row returns to it after.
-  const holdsKeyboardFocus = rowKey === answerRows.keyboardFocus && !isEditing;
+  const holdsKeyboardFocus = rowKey === keyboardFocusRow.keyboardFocus && !isEditing;
 
   return (
     <div
@@ -1336,9 +1308,7 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       {...domProps}
       // A slow pointer is on this row (С7.10), or over an open card the keyboard's
       // focus, which presses the button with Enter (SPEC_KEYBOARD.md, М5): its button shows.
-      data-sidebar-row-intent={isIntentRow || (holdsKeyboardFocus && answerRows.keyboardFocusShowsActions) ? "true" : undefined}
-      // A compact item's stack opens for this (SidebarAnswerRowContext).
-      data-sidebar-row-answer={isAnswerRow ? "true" : undefined}
+      data-sidebar-row-intent={isIntentRow || (holdsKeyboardFocus && keyboardFocusRow.keyboardFocusShowsActions) ? "true" : undefined}
       data-sidebar-row=""
       data-sidebar-row-surface=""
       data-sidebar-row-key={rowKey}
@@ -1416,7 +1386,7 @@ function SidebarRowTitleCell({
 /// in the row's flow (`SidebarMetaCell`), so this one ends where the next
 /// guideline begins instead of running under the count and Connect and being
 /// masked off there (user's decision of 07.10.2026).
-function SidebarPreviewRail({ children, meta }: { children: ReactNode; meta?: ReactNode }) {
+function SidebarPreviewRail({ children }: { children: ReactNode }) {
   return (
     <>
       <div
@@ -1436,25 +1406,22 @@ function SidebarPreviewRail({ children, meta }: { children: ReactNode; meta?: Re
       >
         {children}
       </div>
-      <SidebarMetaCell>{meta}</SidebarMetaCell>
+      <SidebarMetaCell />
     </>
   );
 }
 
 /// The meta zone's cell, the count and Connect, with the guideline's pixel
-/// before it (`--sidebar-meta-lead`, none in a compact item, global.css).
-/// It holds nothing in the flow (the count and the buttons are placed over
-/// it); it is here so the previews' cell ends on the guideline. A compact
-/// item shows its stack of mini-cards here, at its right end (`children`).
-function SidebarMetaCell({ children }: { children?: ReactNode }) {
+/// before it (`--sidebar-meta-lead`, global.css). It holds nothing (the count
+/// and the buttons are placed over it); it is here so the previews' cell ends
+/// on the guideline.
+function SidebarMetaCell() {
   return (
     <span
       aria-hidden="true"
       data-sidebar-meta-cell=""
       className="w-[calc(var(--sidebar-meta-lead,1px)+var(--sidebar-zone))] shrink-0 self-stretch"
-    >
-      {children}
-    </span>
+    />
   );
 }
 
@@ -1528,11 +1495,12 @@ function SidebarRowBody({
     if (keyTurnTo !== null && keyTurnTo !== linkChecked) setKeyTurnTo(null);
   }
   const linkTurnByKey = keyTurnTo === linkChecked;
-  // The mark turns on the stack's spring in Full, as Перемещение in Minimal
-  // (С7, РД4): the hover's 150 ms ease-out put most of the turn into the
-  // first frames, too quick to be seen (DESIGN_SYSTEM.md, компактный пункт).
+  // The mark turns on the spring in Full, as Перемещение in Minimal
+  // (spring.ts; С7, РД4): the hover's 150 ms ease-out put most of the turn
+  // into the first frames, too quick to be seen (DESIGN_SYSTEM.md,
+  // «Компактная строка боковой панели»).
   useMotionLevel();
-  const linkIconSpringStyle = channelIconSpringStyle(springMotion());
+  const linkIconSpringStyle = springStyle(springMotion());
   // A reference `Connected` replaces the count: always for Everything in an
   // expanded card (С5), and in the feed for the collections of the card under
   // the pointer (С4). The link editor's own buttons keep that place otherwise.
@@ -1562,8 +1530,8 @@ function SidebarRowBody({
     e.preventDefault();
     onDoubleClick();
   } : undefined;
-  // What stands in the meta zone under Connect and Connected: the count, or a
-  // compact row's stack. Either gives way to them the same way.
+  // The count, which stands in the meta zone under Connect and Connected,
+  // gives way to them.
   const metaAnswerClass = isLinkEditor
     ? cn(
         ROW_INTENT_FADE,
@@ -1609,19 +1577,7 @@ function SidebarRowBody({
         <SidebarRowTitleCell>
           {label}
         </SidebarRowTitleCell>
-        <SidebarPreviewRail
-          meta={(
-            <SidebarCompactStack
-              cards={cards}
-              {...previewHandlers}
-              allowHoverPreview
-              // Connect, Connected and Disconnect cover the stack as they
-              // cover the count; under the reference `Connected`, which lets
-              // the pointer through, the faded cards must not answer it.
-              className={cn(metaAnswerClass, (showConnectedPill || linkButtonPinned) && "pointer-events-none")}
-            />
-          )}
-        >
+        <SidebarPreviewRail>
           <SidebarPreviewStrip
             cards={cards}
             {...previewHandlers}
@@ -1636,12 +1592,8 @@ function SidebarRowBody({
           )}
           data-sidebar-row-text=""
           data-sidebar-meta-count=""
-          ref={trackTextClip}
-          // A compact item's second line dissolves as the name does (global.css).
-          style={SIDEBAR_ROW_TEXT_MASK_STYLE}
         >
           {count ?? ""}
-          {count === null ? null : <SidebarCountNoun count={count} />}
         </span>
         {/* The List's count while the rows move from it or to it, drawn on
             the table over the row (global.css, «List and table»;
@@ -2010,6 +1962,11 @@ const TagNavItem = memo(function TagNavItem({
     setPagePath(undefined);
     collectionPagePath(tag).then(setPagePath, () => setPagePath(null));
   }, [tag]);
+  // The row's menu, as data: a right click opens it at the pointer, in the
+  // menu panel when the menu mode is `window`, else on the page
+  // (src/lib/collectionRowMenu.ts; SPEC_MENU_WINDOW.md, Г4).
+  const rowMenuRef = useRef<SpecPointMenuHandle>(null);
+  const rowMenuSpec = useMemo(() => collectionRowSpec({ pageFound: Boolean(pagePath) }), [pagePath]);
   const isLinkEditor = !!linkEditor;
   // The parent hands out one callback for every row; each row binds its own tag.
   const startRename = useCallback(() => onDoubleClick(tag), [onDoubleClick, tag]);
@@ -2023,6 +1980,24 @@ const TagNavItem = memo(function TagNavItem({
     end: () => onRenameEnd(tag),
   });
   const deleteTag = useCallback(() => onDelete(tag), [onDelete, tag]);
+  const actOnRowMenu = async (action: MenuAction): Promise<MenuAnswer> => {
+    switch (collectionRowMenuItemId(action)) {
+      case "rename":
+        startRename();
+        break;
+      // The collection is a page in the folder: it opens where the cards'
+      // Reveal in Finder opens theirs, with the space's icon.
+      case "reveal":
+        if (pagePath) revealInFinder(pagePath);
+        break;
+      case "delete":
+        setDeleteOpen(true);
+        break;
+      case null:
+        break;
+    }
+    return { kind: "done" };
+  };
   const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
 
   // The neighbours part by the level (SPEC_MOTION_LEVELS.md, С9).
@@ -2082,79 +2057,61 @@ const TagNavItem = memo(function TagNavItem({
 
   return (
     <>
-      <ContextMenu onOpenChange={findPage}>
-        <ContextMenuTrigger asChild>
-          <SidebarRowFrame
-            rowKey={rowKey}
-            isIntentRow={isIntentRow}
-            isCurrentRoute={isCurrentRoute}
-            isLinked={linkEditor?.checked}
-            isSidebarRowFocused={isSidebarRowFocused}
-            className={cn(
-              isDragging && "pointer-events-none opacity-0",
-            )}
-            style={style}
-            nodeRef={setNodeRef}
-            textDropTag={tag}
-            {...(!isLinkEditor || linkEditor.forSelection ? attributes : {})}
-            {...(!isLinkEditor || linkEditor.forSelection ? listeners : {})}
-          >
-            <SidebarRowBody
-              to={to}
-              label={label}
-              count={count}
-              cards={cards}
-              previewsPending={previewsPending}
-              previewKeyPrefix={previewKeyPrefix}
-              rowKey={rowKey}
-              sourceTag={tag}
-              onPreviewClick={onPreviewClick}
-              onPreviewContextMenu={onPreviewContextMenu}
-              onPreviewTriggerRef={onPreviewTriggerRef}
-              activePreviewKey={activePreviewKey}
-              isCurrentRoute={isCurrentRoute}
-              isDragging={isDragging}
-              isDropDragging={isDropDragging}
-              onClick={onClick}
-              onSameClick={onSameClick}
-              onDoubleClick={startRename}
-              linkEditor={linkEditor}
+      <SidebarRowFrame
+        rowKey={rowKey}
+        isIntentRow={isIntentRow}
+        isCurrentRoute={isCurrentRoute}
+        isLinked={linkEditor?.checked}
+        isSidebarRowFocused={isSidebarRowFocused}
+        className={cn(
+          isDragging && "pointer-events-none opacity-0",
+        )}
+        style={style}
+        nodeRef={setNodeRef}
+        textDropTag={tag}
+        onContextMenu={(event) => {
+          // The row's menu opens here, at the pointer, asked for in this
+          // handler; the page's own never opens. A thumbnail's right click
+          // is its card's menu and does not come here.
+          event.preventDefault();
+          rowMenuRef.current?.open({ x: event.clientX, y: event.clientY });
+        }}
+        {...(!isLinkEditor || linkEditor.forSelection ? attributes : {})}
+        {...(!isLinkEditor || linkEditor.forSelection ? listeners : {})}
+      >
+        <SidebarRowBody
+          to={to}
+          label={label}
+          count={count}
+          cards={cards}
+          previewsPending={previewsPending}
+          previewKeyPrefix={previewKeyPrefix}
+          rowKey={rowKey}
+          sourceTag={tag}
+          onPreviewClick={onPreviewClick}
+          onPreviewContextMenu={onPreviewContextMenu}
+          onPreviewTriggerRef={onPreviewTriggerRef}
+          activePreviewKey={activePreviewKey}
+          isCurrentRoute={isCurrentRoute}
+          isDragging={isDragging}
+          isDropDragging={isDropDragging}
+          onClick={onClick}
+          onSameClick={onSameClick}
+          onDoubleClick={startRename}
+          linkEditor={linkEditor}
+        />
+        {renameEdit.notice !== null && (
+          // The old name returned after a refusal; its reason stays a moment.
+          <SidebarNameNotice notice={renameEdit.notice}>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0"
+              data-sidebar-name-notice-anchor=""
             />
-            {renameEdit.notice !== null && (
-              // The old name returned after a refusal; its reason stays a moment.
-              <SidebarNameNotice notice={renameEdit.notice}>
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0"
-                  data-sidebar-name-notice-anchor=""
-                />
-              </SidebarNameNotice>
-            )}
-          </SidebarRowFrame>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={startRename}>
-            <Pencil className="size-[13px]" />
-            Rename
-          </ContextMenuItem>
-          {/* The collection is a page in the folder: it opens where the
-              cards' Reveal in Finder opens theirs, with the space's icon. */}
-          <ContextMenuItem
-            disabled={!pagePath}
-            onSelect={() => {
-              if (pagePath) revealInFinder(pagePath);
-            }}
-            data-sidebar-collection-reveal=""
-          >
-            <FolderOpen className="size-[13px]" />
-            Reveal in Finder
-          </ContextMenuItem>
-          <ContextMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-            <Trash2 className="size-[13px]" />
-            Delete
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+          </SidebarNameNotice>
+        )}
+      </SidebarRowFrame>
+      <SpecPointMenu handleRef={rowMenuRef} spec={rowMenuSpec} act={actOnRowMenu} onOpenChange={findPage} />
 
       <DeleteCollectionDialog
         open={deleteOpen}
@@ -2203,100 +2160,38 @@ export function DeleteCollectionDialog({
 }
 
 function NewChannelRow({
-  isEditing,
   defaultName,
   isSidebarRowFocused,
-  onStartCreate,
   edit,
 }: {
-  isEditing: boolean;
   defaultName: string;
   isSidebarRowFocused: boolean;
-  onStartCreate: () => void;
   /** The naming of the new collection; it outlives the row, whose reason
    *  stays a moment after a refused name closed it. */
   edit: NameEdit;
 }) {
-  const { setNodeRef } = useDroppable({
-    id: "create-channel",
-    disabled: isEditing,
-  });
-
   return (
     <SidebarRowFrame
       rowKey="create-channel"
       isCurrentRoute={false}
       isSidebarRowFocused={isSidebarRowFocused}
-      isEditing={isEditing}
-      // The name being typed and the drop target alike are one cell across
-      // the row: no column line crosses them (08.10.2026).
+      isEditing
+      // The name being typed is one cell across the row: no column line
+      // crosses it (08.10.2026).
       spansRow
-      nodeRef={setNodeRef}
       data-sidebar-new-channel-row=""
     >
-      {isEditing ? (
-        <SidebarEditableRowBody
-          defaultValue={defaultName}
-          placeholder=""
-          ariaLabel="Имя нового канала"
-          // The key's label comes from the one key table the bottom bar uses.
-          submitAction={{ label: "Create", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
-          edit={edit}
-        />
-      ) : (
-        <button
-          type="button"
-          className="block w-full text-left"
-          onClick={onStartCreate}
-        >
-          <SidebarCreateChannelRowBody isEditing={false} />
-        </button>
-      )}
+      <SidebarEditableRowBody
+        defaultValue={defaultName}
+        placeholder=""
+        ariaLabel="Имя нового канала"
+        // The key's label comes from the one key table the bottom bar uses.
+        submitAction={{ label: "Create", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
+        edit={edit}
+      />
     </SidebarRowFrame>
   );
 }
-
-/// The drop target that founds a collection with the dragged card: a row of
-/// the table with its own seam, made of one cell across the whole row (user's
-/// decision of 08.10.2026: the name column cut the label). The row lies over
-/// the column lines (`spansRow`), so the label never crosses one; the plus
-/// stands where a count stands.
-function SidebarCreateChannelRowBody({
-  isEditing,
-}: {
-  isEditing: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        SIDEBAR_ROW_BOX_CLASS,
-        // The label starts where a name starts and runs to the plus: the
-        // row's inset, then the plus's 32px.
-        "pl-[var(--sidebar-row-pad-x)] pr-[calc(var(--sidebar-row-pad-x)+2rem)] font-sans text-base text-muted-foreground",
-        // A slow pointer lights it like any row (С7.10); the keyboard at once.
-        !isEditing && "group-focus-within:text-foreground",
-      )}
-      data-sidebar-create-channel-row-body
-    >
-      {/* Set 1px in like every row's name. */}
-      <span data-sidebar-row-text="" className="min-w-0 flex-1 translate-x-px truncate text-left">
-        {CREATE_COLLECTION_ROW_LABEL}
-      </span>
-      <span
-        aria-hidden="true"
-        className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end"
-      >
-        <Plus
-          data-sidebar-create-channel-plus=""
-          className={cn("size-4 shrink-0 text-muted-foreground", isEditing && "opacity-0")}
-        />
-      </span>
-    </div>
-  );
-}
-
-/// The command's own name, as on the plus over the list and in the bottom bar.
-const CREATE_COLLECTION_ROW_LABEL = "New Collection";
 
 /// How many placeholder tiles a strip draws while its thumbnails are on the
 /// way: one per card not shown yet, up to the `tiles` its width holds
@@ -2397,10 +2292,7 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
-  stackStyle,
 }: {
-  /** Set, the thumbnail is a card of a compact row's stack, placed by it. */
-  stackStyle?: CSSProperties;
   /** A card with a thumbnail and a slug. */
   card: PreviewCard & { slug: string };
   /** The strip's own key for the thumbnail (`SidebarPreviewTarget.key`). */
@@ -2435,11 +2327,10 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
     // and a button, and the keyboard reaches the list by its rows.
     <div
       ref={setTileRef}
-      style={stackStyle}
       className={cn(
-        stackStyle ? CHANNEL_ICON_CARD_CLASS : sidebarStripTileClass(preview, picture),
-        // A stack's card and a strip's tile answer with their own edge, as a
-        // button's does (global.css, «Thumbnail edge»).
+        sidebarStripTileClass(preview, picture),
+        // The tile answers with its own edge, as a button's does
+        // (global.css, «Thumbnail edge»).
         // The source dims as a dragged feed card does.
         isDragging && "opacity-30",
       )}
@@ -2465,22 +2356,16 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
         // belongs to the card, and the row it stands in does not move.
         event.stopPropagation();
       }}
-      // A stack's card answers as the strip's thumbnail does, under a name
-      // of its own: the strip's tiles are what the strip counts.
-      data-sidebar-preview-thumbnail={stackStyle ? undefined : "trigger"}
+      data-sidebar-preview-thumbnail="trigger"
       data-sidebar-preview-key={previewKey}
       data-sidebar-preview-row={rowKey}
       data-sidebar-preview-slug={card.slug}
-      data-sidebar-stack-card={stackStyle ? "trigger" : undefined}
-      data-channel-icon-card={stackStyle ? "" : undefined}
       data-thumb-edge=""
       data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
       data-sidebar-preview-dragging={isDragging ? "true" : undefined}
-      data-micro-preview-state={stackStyle ? undefined : picture.state}
+      data-micro-preview-state={picture.state}
     >
-      {stackStyle
-        ? <MicroPreviewThumbnail preview={preview} fill loading="lazy" decoding="async" draggable={false} />
-        : <SidebarStripTileImage preview={preview} picture={picture} />}
+      <SidebarStripTileImage preview={preview} picture={picture} />
       {dragBound && (
         <SidebarThumbnailDrag
           dragId={sidebarThumbnailDragId(target.key)}
@@ -2636,88 +2521,6 @@ function SidebarPreviewStrip({
       ))}
       </div>
     </div>
-  );
-}
-
-/// The word after a compact item's count: «Element» is the product's name
-/// for a card (Open element, Find elements). Wider rows show the bare number,
-/// so the style lays the word out in compact rows only (global.css,
-/// «Compact rows»).
-function SidebarCountNoun({ count }: { count: number }) {
-  return <span data-sidebar-count-noun="">{count === 1 ? " element" : " elements"}</span>;
-}
-
-/// A compact item's previews: the 7.23 stack of up to three mini-cards at the
-/// item's right end (DESIGN_SYSTEM.md, «Компактная строка боковой панели»).
-/// Its cards are the strip's first thumbnails and behave as they do: a hover opens the card's preview, a click the card, a right click
-/// its menu, a drag carries it. While the thumbnails are on the way the stack
-/// holds placeholder cards as the strip holds placeholder tiles. Shown only by
-/// the compact rows' style; above the threshold it is not laid out and its
-/// images are not asked for.
-function SidebarCompactStack({
-  cards,
-  count,
-  previewsPending = false,
-  previewKeyPrefix,
-  rowKey,
-  sourceTag,
-  onPreviewClick,
-  onPreviewContextMenu,
-  onPreviewTriggerRef,
-  activePreviewKey,
-  allowHoverPreview = false,
-  className,
-}: Parameters<typeof SidebarPreviewStrip>[0] & { className?: string }) {
-  const pending = cards === undefined;
-  const thumbnails = pending ? [] : firstThumbnails(cards, CHANNEL_ICON_MAX_CARDS);
-  // The stack holds its own three, whatever the strip's width.
-  const placeholderCount = pending || previewsPending
-    ? sidebarPreviewPlaceholderCount(count, thumbnails.length, CHANNEL_ICON_MAX_CARDS)
-    : 0;
-  const total = thumbnails.length + placeholderCount;
-  if (total === 0) return null;
-  // The collection's first card is the deck's top one: depth follows order.
-  const deckStyle = (slot: number) => channelIconCardStyle(total - 1 - slot, total);
-  return (
-    <ChannelIcon className={className} data-sidebar-compact-stack="">
-      {thumbnails.map((card, index) => {
-        const previewKey = `${previewKeyPrefix}:stack:${card.slug ?? index}:${index}`;
-        const style = deckStyle(index);
-        if (!allowHoverPreview || !hasPreviewSlug(card)) {
-          // The lifted copy of a row draws its media without behaviour.
-          return (
-            <div key={previewKey} className={CHANNEL_ICON_CARD_CLASS} style={style} data-channel-icon-card="" data-thumb-edge="">
-              <MicroPreviewThumbnail preview={microPreviewFromPreviewCard(card)} fill loading="lazy" draggable={false} />
-            </div>
-          );
-        }
-        return (
-          <SidebarPreviewThumbnail
-            key={previewKey}
-            card={card}
-            previewKey={previewKey}
-            rowKey={rowKey}
-            sourceTag={sourceTag}
-            isPreviewActive={activePreviewKey === previewKey}
-            onPreviewClick={onPreviewClick}
-            onPreviewContextMenu={onPreviewContextMenu}
-            onPreviewTriggerRef={onPreviewTriggerRef}
-            stackStyle={style}
-          />
-        );
-      })}
-      {Array.from({ length: placeholderCount }, (_, offset) => (
-        <div
-          key={`placeholder:${offset}`}
-          aria-hidden="true"
-          className={CHANNEL_ICON_CARD_CLASS}
-          style={deckStyle(thumbnails.length + offset)}
-          data-channel-icon-card=""
-          data-thumb-edge=""
-          data-sidebar-stack-placeholder=""
-        />
-      ))}
-    </ChannelIcon>
   );
 }
 
@@ -2891,7 +2694,7 @@ export function SidebarTagRowDragPreview({
   return (
     // As wide as the row it lifts (the overlay takes the row's box), so its
     // look follows the same width as the list's does (sidebarLook.ts,
-    // global.css, «Compact rows»); the border is inside it.
+    // global.css, «List sidebar»); the border is inside it.
     <div className="h-full w-full" data-sidebar-drag-row="" ref={keepDragRowLook}>
     <div
       className="flex h-full w-full items-center rounded-1 border border-border bg-sidebar shadow-md"
@@ -2900,19 +2703,15 @@ export function SidebarTagRowDragPreview({
       {/* The row's inset is the name cell's own, as in the resting row. */}
       <div className="relative flex w-full min-w-0 items-center py-1 font-sans text-base text-muted-foreground" data-sidebar-row-body="">
         <SidebarRowTitleCell>{label}</SidebarRowTitleCell>
-        <SidebarPreviewRail meta={<SidebarCompactStack {...strip} />}>
+        <SidebarPreviewRail>
           <SidebarPreviewStrip {...strip} />
         </SidebarPreviewRail>
         <span
           className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
           data-sidebar-row-text=""
           data-sidebar-meta-count=""
-          ref={trackTextClip}
-          // A compact item's second line dissolves as the name does (global.css).
-          style={SIDEBAR_ROW_TEXT_MASK_STYLE}
         >
           {count}
-          <SidebarCountNoun count={count} />
         </span>
       </div>
     </div>

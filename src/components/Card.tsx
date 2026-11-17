@@ -105,6 +105,11 @@ interface CardProps {
   /// pointer reached, never one a sweep crosses (SPEC_CARD_STATES.md, С8.6);
   /// outside the feed a card is always armed.
   hoverArmed?: boolean;
+  /// A menu a right click opened on this card is up, or has closed and the
+  /// pointer has not shown itself off the card since: the card keeps the
+  /// look the pointer's hover gives it, though the hover engine answers
+  /// nothing meanwhile (SPEC_CARD_STATES.md, С7.8).
+  menuHeld?: boolean;
   dragBlocks?: readonly LightBlock[];
   clearSelectionOnDragStart?: () => void;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
@@ -362,7 +367,7 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, menuBadge = null, keyboardLift = false, hoverEnabled = true, hoverArmed = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, menuBadge = null, keyboardLift = false, hoverEnabled = true, hoverArmed = true, menuHeld = false, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
   // The card draws again when its pictures were written again, loaded in the
   // feed then or not: every address of them takes the new version
   // (SPEC_THUMBNAILS.md, «Адрес картинки»).
@@ -404,6 +409,9 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
   const buttonsOnly = hasHoverActions && !descriptor.lifts;
   // The pointer's hover answers on this card (С8.6).
   const hoverAnswers = hoverEnabled && hoverArmed;
+  // What the pointer's hover would show, held by a right click's menu: none
+  // where the hover shows none (a selection, the keyboard's use).
+  const held = menuHeld && hoverEnabled;
   const [actionsPinned, setActionsPinned] = useState(false);
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -444,12 +452,12 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       // hover is enabled, a pointer-opened menu holding the row, or the
       // keyboard's focus (С8, С8.5).
       data-card-lift-hover={lifts && hoverAnswers ? "" : undefined}
-      data-card-lift-pinned={lifts && (actionsPinned || keyboardLift) ? "" : undefined}
+      data-card-lift-pinned={lifts && (actionsPinned || keyboardLift || held) ? "" : undefined}
       // A card that does not lift answers the pointer's hover and a menu the
       // pointer opened with its top buttons alone, on the lift's clock; the
       // keyboard's focus brings up nothing (Д31).
       data-card-buttons-hover={buttonsOnly && hoverAnswers ? "" : undefined}
-      data-card-buttons-pinned={buttonsOnly && actionsPinned ? "" : undefined}
+      data-card-buttons-pinned={buttonsOnly && (actionsPinned || held) ? "" : undefined}
       style={lifts ? cardLiftStyle(descriptor) : undefined}
       className={cn(
         // The card's keyboard focus is the feed's (`data-feed-grid-item-focused`,
@@ -482,6 +490,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
           lifts={descriptor.lifts}
           keyboardLift={keyboardLift}
           hoverArmed={hoverArmed}
+          menuHeld={held}
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
           onInteractiveOpenChange={onMenuOpenChange}
           onActionsPinnedChange={setActionsPinned}
@@ -900,6 +909,10 @@ const DRAG_STACK_LAYERS = [
   { index: 2, x: 7, y: -11, rotate: 0.75, shadow: "sm" },
   { index: 3, x: -2, y: -16, rotate: -0.45, shadow: "sm" },
 ] as const;
+
+/** How many cards the dragged stack draws: its layers. The outside window
+ *  gets as many (SPEC_OUTSIDE_WINDOW.md, ПК1). */
+export const DRAG_STACK_DEPTH = DRAG_STACK_LAYERS.length;
 
 function DragStackCardPreview({
   block,

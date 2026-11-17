@@ -96,7 +96,9 @@ const vite = await startAuditVite([{
             writes += 1;
             const next = { ...blocks[params.source_slug], body: new TextDecoder().decode(bytes), body_hash: 'hash-' + writes };
             blocks[next.slug] = next;
-            return next;
+            // A command that changes a space answers with its value and the
+            // cards it changed (SPEC_INTEGRATION.md, «Список изменённых карточек»).
+            return { value: next, cards: [] };
           }
           throw new Error(command);
         },

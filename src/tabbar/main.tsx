@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { installControlCharGuard } from "@/lib/controlCharGuard";
+import { followMenuPanel } from "@/lib/menuPanelSource";
 import { installMotionInput } from "@/lib/motionInput";
 import { applyStoredAppearance } from "./appearance";
 import { TabBarApp } from "./TabBarApp";
@@ -25,3 +26,8 @@ ReactDOM.createRoot(rootElement).render(
     <TabBarApp />
   </React.StrictMode>,
 );
+
+// The bar's menus open in the menu panel when the menu mode is `window`
+// (SPEC_MENU_WINDOW.md, МО22, group Е): this page is a source of menus like
+// a tab's.
+followMenuPanel();

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarCompactRowsBelowPx } from "./appLayout";
-import { CHANNEL_ICON_SPRING_EASING, CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
+import { SPRING_EASING, SPRING_MS, SPRING_SAMPLES } from "./spring";
 import { setMotionLevel } from "@/test/motionLevel";
 import { MOTION_SPRING_MOVE_MS } from "./motion";
 import { installMotionInput } from "./motionInput";
@@ -78,8 +78,8 @@ function tableLayout(): RowsLayout {
 }
 
 describe("the move's time", () => {
-  it("is the stack spring's settling time, its first third and its half", () => {
-    expect(LIST_MORPH_SETTLE_MS).toBe(CHANNEL_ICON_SPRING_MS);
+  it("is the spring's settling time, its first third and its half", () => {
+    expect(LIST_MORPH_SETTLE_MS).toBe(SPRING_MS);
     expect(LIST_MORPH_SETTLE_MS).toBe(441);
     expect(LIST_MORPH_FADE_OUT_MS).toBe(147);
     expect(LIST_MORPH_FADE_IN_FROM_MS).toBe(220.5);
@@ -207,7 +207,7 @@ describe("the move's spring", () => {
   it("is played by the spring's own samples, the points of its linear() easing", () => {
     const curve = moveCurve(segmentToward(1, 0, 0));
     expect(curve).toHaveLength(SPRING_SAMPLES + 1);
-    const points = /^linear\((.*)\)$/.exec(CHANNEL_ICON_SPRING_EASING)![1]!.split(",").map(Number);
+    const points = /^linear\((.*)\)$/.exec(SPRING_EASING)![1]!.split(",").map(Number);
     curve.forEach((frame, index) => {
       expect(frame.offset).toBeCloseTo(index / SPRING_SAMPLES, 10);
       // From the List (1) to the table (0): one less the eased progress.

@@ -117,7 +117,7 @@ describe("AppearanceSection", () => {
     it("stands right under Theme as a panel pill of Full, Minimal and Off, with no caption", () => {
       render(<AppearanceSection />);
       const labels = [...document.querySelectorAll("p.text-base:not(.text-muted-foreground)")].map((label) => label.textContent);
-      expect(labels.slice(0, 3)).toEqual(["Theme", "Motion", "Card corners"]);
+      expect(labels.slice(0, 3)).toEqual(["Theme", "Motion", "Element corners"]);
       const pill = screen.getByRole("tablist", { name: "Motion" });
       expect(pill).toHaveAttribute("data-size", "panel");
       expect(screen.getAllByRole("tab").filter((tab) => pill.contains(tab)).map((tab) => tab.textContent)).toEqual(["Full", "Minimal", "Off"]);

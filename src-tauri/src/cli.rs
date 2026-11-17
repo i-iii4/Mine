@@ -432,6 +432,19 @@ fn open_index(vault: &VaultLayout) -> Result<rusqlite::Connection, CliError> {
     }
     let conn = db::open_read_only(&vault.index_db_path())
         .map_err(|error| CliError::internal(format!("open index: {error:#}")))?;
+    // A read migrates nothing, so an index of another schema version cannot
+    // be read: its tables are not the ones the queries name. Mine brings the
+    // index to its version when it opens the space.
+    match conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)) {
+        Ok(db::CURRENT_SCHEMA_VERSION) => {}
+        Ok(_) => {
+            return Err(CliError::space(format!(
+                "the index of {} was written by another version of Mine; open the space in Mine to update it",
+                vault.root().display()
+            )))
+        }
+        Err(error) => return Err(CliError::internal(format!("read index: {error:#}"))),
+    }
     match db::index_is_ready(&conn) {
         Ok(true) => Ok(conn),
         Ok(false) => Err(index_not_built(vault)),
@@ -981,7 +994,7 @@ fn cmd_card_rename(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     let vault = resolve_space(env, flags.space.as_deref())?;
     let conn = open_index_rw(&vault)?;
     let result =
-        crate::commands::blocks::rename_block_file_inner(None, None, &conn, &vault, slug, new_name)
+        crate::commands::blocks::rename_block_file_inner(None, &conn, &vault, slug, new_name)
             .map_err(|e| CliError::internal(format!("rename: {e:?}")))?;
     if flags.json {
         return Ok(format!(
@@ -1289,6 +1302,40 @@ pub(crate) mod tests {
         assert_eq!(vault.new_collection_slug("New"), "Sets/New");
         std::fs::write(&marker, "broken json").unwrap();
         assert!(resolve_space(&env, None).is_err());
+    }
+
+    /// An index of the previous schema version is said so, not read: a read
+    /// migrates nothing, and its queries name tables that index lacks (the
+    /// search word indexes of schema 8). The index is left as it was.
+    #[test]
+    fn reading_an_index_of_another_schema_version_says_so() {
+        let (_dir, env, _root) = fixture();
+        let index = resolve_space(&env, None)
+            .unwrap_or_else(|error| panic!("{}", error.message))
+            .index_db_path();
+        let version = |index: &std::path::Path| -> i64 {
+            rusqlite::Connection::open(index)
+                .unwrap()
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(version(&index), db::CURRENT_SCHEMA_VERSION);
+        rusqlite::Connection::open(&index)
+            .unwrap()
+            .pragma_update(None, "user_version", 7)
+            .unwrap();
+
+        for command in [&["search", "sunset"][..], &["cards", "--collection", "Nature"][..]] {
+            let out = run(&env, &args(command));
+            assert_eq!(out.code, EXIT_SPACE, "{}", out.stderr);
+            assert!(
+                out.stderr.contains("was written by another version of Mine; open the space in Mine to update it"),
+                "{}",
+                out.stderr
+            );
+            assert!(!out.stderr.contains("no such table"), "{}", out.stderr);
+        }
+        assert_eq!(version(&index), 7, "a read migrated the index");
     }
 
     /// Е2.21: reading builds no index and runs no reconciliation

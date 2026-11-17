@@ -22,6 +22,7 @@ import { startCardPictureVersions } from "@/lib/pictureVersions";
 import { answerSwipeQuestion } from "@/lib/horizontalScroller";
 import { scheduleAfterNextPaint } from "@/lib/startup";
 import { followMenuPanel } from "@/lib/menuPanelSource";
+import { followOutsideWindow } from "@/lib/outsidePreviewSource";
 import { afterTwoFrames } from "@/lib/tabPage";
 import "./styles/global.css";
 
@@ -113,6 +114,9 @@ function StartupPaintReporter() {
     // card menu is drawn there (DESIGN_SYSTEM.md, «Меню карточки в
     // отдельном окне: проба»).
     followMenuPanel();
+    // The outside window, for what does not fit in this window
+    // (SPEC_OUTSIDE_WINDOW.md, НО1): made after the first frame.
+    followOutsideWindow();
   }), []);
   return null;
 }

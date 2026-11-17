@@ -14,6 +14,7 @@ export type TabBarAction =
   | "close the tabs to the left"
   | "close the tabs to the right"
   | "open the elements in new tabs"
+  | "drag the elements past the window"
   | "switch tabs"
   | "move the tab"
   | "move the tab to a new window"

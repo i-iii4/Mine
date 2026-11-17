@@ -16,12 +16,12 @@ import { Button } from "@/components/ui/button";
  * decision of 08.10.2026), and 16 px above the bottom bar's top edge, which
  * it never covers (decision of 14.10.2026). The page publishes that distance
  * from where the bar stands (`publishNotificationBottom`); without a bar the
- * corner keeps the feed's inset from the window's edge.
+ * corner keeps the shell's inset from the window's edge (`--shell-rhythm`).
  */
 export function NotificationAnchor({ children }: { children: ReactNode }) {
   return (
     <div
-      className="fixed right-[var(--edge-rhythm,32px)] bottom-[var(--notification-bottom,var(--edge-rhythm,32px))] z-40"
+      className="fixed right-[var(--shell-rhythm)] bottom-[var(--notification-bottom,var(--shell-rhythm))] z-40"
       data-notification-anchor=""
     >
       {children}

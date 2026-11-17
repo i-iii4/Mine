@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CARD_PEEK_SPRING_MS, CARD_PEEK_SPRING_RESPONSE_S } from "@/lib/cardPeek";
-import { SPRING_RESPONSE_S } from "@/lib/channelIcon";
+import { SPRING_RESPONSE_S } from "@/lib/spring";
 import {
   MOTION_EASE,
   MOTION_ENTER_MS,
@@ -98,8 +98,8 @@ const liftUp = /^(\d+)ms var\(--card-lift-curve-up\)$/.exec(token("--lift-up"));
 const LIFT = curveProfile(token("--card-lift-curve-up"), Number(liftUp?.[1]));
 /** The card window's spring in Full: how a window moves when it flies. */
 const WINDOW_SPRING = springProfile(CARD_PEEK_SPRING_RESPONSE_S);
-/** The stack's spring in Full: the List and the table, the mark. */
-const STACK_SPRING = springProfile(SPRING_RESPONSE_S);
+/** The interface's spring in Full: the List and the table, the mark. */
+const INTERFACE_SPRING = springProfile(SPRING_RESPONSE_S);
 
 describe("the system of motion values (SPEC_MOTION_LEVELS.md, «Отношения системы»)", () => {
   it("reads the references it compares with", () => {
@@ -148,7 +148,7 @@ describe("the system of motion values (SPEC_MOTION_LEVELS.md, «Отношени
     expect(move.mainMs).toBeGreaterThanOrEqual(LIFT.mainMs);
     expect(move.firstFrame).toBeLessThanOrEqual(0.2);
     expect(move.mainMs).toBeLessThanOrEqual(WINDOW_SPRING.mainMs);
-    expect(move.mainMs).toBeLessThanOrEqual(STACK_SPRING.mainMs);
+    expect(move.mainMs).toBeLessThanOrEqual(INTERFACE_SPRING.mainMs);
   });
 
   it("keeps the tokens of the stylesheet equal to the values in code", () => {

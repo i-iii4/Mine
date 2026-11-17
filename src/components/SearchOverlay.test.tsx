@@ -21,12 +21,14 @@ const listGridBlocksMock = vi.fn<(
 
 vi.mock("@/lib/commands", () => ({
   // Recent mode reads Everything: the mock hears no tag.
+  // The overlay's recent cards are the feed's first: no card to start after
+  // (`after` is null), which the mock hears as the number 0.
   listGridBlocks: (
     place: TabLocation,
-    offset?: number,
+    after: { saved_at: string; slug: string } | null,
     limit?: number,
     query?: string,
-  ) => listGridBlocksMock(place.kind === "collection" ? place.tag : undefined, offset, limit, query),
+  ) => listGridBlocksMock(place.kind === "collection" ? place.tag : undefined, after === null ? 0 : -1, limit, query),
   searchGridBlocks: async (tag: string | undefined, query: string, limit: number) => {
     const grid = await listGridBlocksMock(tag, 0, limit, query);
     return {
@@ -1042,7 +1044,7 @@ describe("SearchOverlay result row commands", () => {
     expect(rowOf(0).querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "false");
 
     hover(0);
-    expect(rowCommands(0)).toEqual(["Card actions", "Source", "Connect"]);
+    expect(rowCommands(0)).toEqual(["Element actions", "Source", "Connect"]);
     const actions = rowOf(0).querySelector("[data-card-row-actions]") as HTMLElement;
     expect(actions).toHaveAttribute("data-visible", "true");
     expect(actions).toHaveClass("gap-1", "transition-opacity", "duration-(--motion-enter)");
@@ -1061,7 +1063,7 @@ describe("SearchOverlay result row commands", () => {
     hover(1);
     expect(option(1)).toHaveAttribute("aria-selected", "true");
     expect(rowOf(0).querySelector("[data-card-row-actions]")).toBeNull();
-    expect(rowCommands(1)).toEqual(["Card actions", "Connect"]);
+    expect(rowCommands(1)).toEqual(["Element actions", "Connect"]);
     expect((option(1).querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("60px");
   });
 
@@ -1078,7 +1080,7 @@ describe("SearchOverlay result row commands", () => {
     expect((option(1).querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("");
 
     hover(1);
-    expect(rowCommands(1)).toEqual(["Card actions", "Connect"]);
+    expect(rowCommands(1)).toEqual(["Element actions", "Connect"]);
     fireEvent.wheel(listbox);
     expect(rowCommands(1)).toEqual([]);
 
@@ -1138,7 +1140,7 @@ describe("SearchOverlay result row commands", () => {
     expect(openUrlMock).toHaveBeenCalledWith("https://example.com/article");
     expect(onOpenBlock).not.toHaveBeenCalled();
 
-    fireEvent.pointerDown(within(rowOf(0)).getByRole("button", { name: "Card actions" }), {
+    fireEvent.pointerDown(within(rowOf(0)).getByRole("button", { name: "Element actions" }), {
       button: 0,
       ctrlKey: false,
     });
@@ -1193,7 +1195,7 @@ describe("SearchOverlay result row commands", () => {
     fireEvent.keyDown(input, { key: "k", metaKey: true });
     const rename = await screen.findByRole("menuitem", { name: "Rename…" });
     expect(screen.getByRole("dialog").contains(rename)).toBe(true);
-    const more = within(rowOf(1)).getByRole("button", { name: "Card actions" });
+    const more = within(rowOf(1)).getByRole("button", { name: "Element actions" });
     expect(more).toHaveAttribute("aria-expanded", "true");
     expect(rowOf(1).querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
 

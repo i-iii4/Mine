@@ -10,6 +10,7 @@ import type {
   MenuPanelOpenRequest,
   MenuPanelPageRequest,
   MenuPanelPaint,
+  MenuPanelProgress,
   MenuPanelStatus,
   MenuSpec,
 } from "@/types";
@@ -64,4 +65,11 @@ export function requestOfMenuPanel(request: MenuPanelPageRequest): Promise<void>
  *  time from the input and the look of the window under it. */
 export function reportMenuPanelPainted(paint: MenuPanelPaint): Promise<void> {
   return invoke<void>("menu_panel_painted", { paint });
+}
+
+/** The panel's page tells a step of the menu it draws before its first
+ *  frame: the backend names the last one when the menu draws nothing in
+ *  time (SPEC_MENU_WINDOW.md, МО40а). */
+export function reportMenuPanelProgress(progress: MenuPanelProgress): Promise<void> {
+  return invoke<void>("menu_panel_progress", { progress });
 }

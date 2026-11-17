@@ -1,6 +1,8 @@
-// The logo's menu in the tab bar (SPEC_TABS.md, В43): the sections of the
-// settings window and the dev button styles. It is native, like the tab menu:
-// the bar page is one row tall and would clip a menu drawn inside it (В6).
+// The logo's menu in the tab bar as the system's own (SPEC_TABS.md, В43):
+// the sections of the settings window and the dev button styles. It is what
+// the bar shows when the menu panel takes no menu (SPEC_MENU_WINDOW.md,
+// МО68а; barMenus.ts holds the same rows for the panel): the bar page is one
+// row tall and would clip a menu drawn inside it (В6).
 
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";

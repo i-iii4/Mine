@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SPRING_RESPONSE_S, springSettleMs } from "./channelIcon";
+import { SPRING_RESPONSE_S, springSettleMs } from "./spring";
 import { FLOATING_LAYER_EDGE_PX } from "./floatingLayer";
 import { HOVER_INTENT } from "./hoverIntent";
 import { setMotionLevel } from "@/test/motionLevel";

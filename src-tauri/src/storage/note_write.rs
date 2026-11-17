@@ -414,6 +414,15 @@ impl OwnWrites {
 /// an outside writer to the app.
 static OWN_WRITES: LazyLock<OwnWrites> = LazyLock::new(OwnWrites::default);
 
+/// A command is about to publish `bytes` as the note `slug` of `vault`. The
+/// watcher's event for a file that holds exactly those bytes is then Mine's
+/// own write ([`is_own_write`]); any other contents of the note, however soon
+/// after, are an outside change and are heard. The command projects the note
+/// and makes its pictures itself (SPEC_THUMBNAILS.md, «Свои записи Mine»).
+pub fn expect_own_write(vault: &VaultLayout, slug: &str, bytes: &[u8]) {
+    OWN_WRITES.record(vault.root(), slug, content_hash(bytes), Instant::now());
+}
+
 /// Whether the watcher's event at `path`, a note of `vault`, is one of
 /// Mine's own writes: the file holds exactly the bytes Mine published there
 /// last, at most [`EDIT_OWN_WRITE_TTL_MS`] ago. Anything else is an outside

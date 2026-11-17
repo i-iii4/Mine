@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
-import { deriveCardContent, deriveCardLayoutDescriptor } from "./cardLayout";
+import { deriveCardContent, deriveCardLayoutDescriptor, parsePreviewManifest } from "./cardLayout";
 import { lightBlock } from "@/test/blocks";
 
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
@@ -792,5 +792,59 @@ describe("the media's outline over a text part (SPEC_FEED_DISPLAY.md, Д20)", ()
     const mediaOnly = article({ title: null, preview_text: null, author: null, body: "![](photo.jpg)" });
     expect(lineUnder({ ...mediaOnly, collections: ["Reading"] }, "cards")).toBe(false);
     expect(lineUnder(mediaOnly, "cards")).toBe(false);
+  });
+});
+
+// SPEC_GRID.md, «Кэш при карточке и продолжение раскладки»: a row is a value,
+// and what is read from it is kept by the row object.
+describe("what is read from a card's row is kept by the row", () => {
+  const manifest = (previewHeight: number) => JSON.stringify({
+    kind: "image",
+    primary_preview_path: "preview.jpg",
+    width: 1200,
+    height: 800,
+    preview_width: 640,
+    preview_height: previewHeight,
+    tiles: [],
+    overflow_count: 0,
+  });
+  const row = () => makeBlock({ block_type: "article", title: "Title", body: "Body", preview_text: "First text", preview_manifest: manifest(480) });
+
+  it("reads the same row once", () => {
+    const block = row();
+    expect(deriveCardContent(block)).toBe(deriveCardContent(block));
+    expect(parsePreviewManifest(block)).toBe(parsePreviewManifest(block));
+    for (const show of ["cards", "media", "media-only"] as const) {
+      expect(deriveCardLayoutDescriptor(block, show)).toBe(deriveCardLayoutDescriptor(block, show));
+    }
+  });
+
+  it("describes each presentation of a row by itself", () => {
+    const block = row();
+    expect(deriveCardLayoutDescriptor(block, "cards").textShown).toBe("always");
+    expect(deriveCardLayoutDescriptor(block, "media").textShown).toBe("on-lift");
+    expect(deriveCardLayoutDescriptor(block, "media-only").textShown).toBe("never");
+    expect(deriveCardLayoutDescriptor(block, "cards").textShown).toBe("always");
+    expect(deriveCardLayoutDescriptor(block)).toBe(deriveCardLayoutDescriptor(block, "cards"));
+  });
+
+  it("reads a changed row anew and leaves the row it replaced as it was", () => {
+    const block = row();
+    const before = deriveCardContent(block);
+    const changed = { ...block, preview_text: "Second text", preview_manifest: manifest(360) };
+    const after = deriveCardContent(changed);
+    expect(after.text.text).toBe("Second text");
+    expect(after.media?.aspectRatio).toBeCloseTo(640 / 360);
+    expect(parsePreviewManifest(changed)?.previewHeight).toBe(360);
+    expect(deriveCardContent(block)).toBe(before);
+    expect(before.text.text).toBe("First text");
+    expect(before.media?.aspectRatio).toBeCloseTo(640 / 480);
+  });
+
+  it("reads a row without a manifest once too", () => {
+    const block = makeBlock({ block_type: "article", title: "Title", body: "Body" });
+    expect(parsePreviewManifest(block)).toBeNull();
+    expect(parsePreviewManifest(block)).toBeNull();
+    expect(deriveCardContent(block).media).toBeNull();
   });
 });

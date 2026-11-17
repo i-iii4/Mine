@@ -336,7 +336,7 @@ try {
   await actions.getByRole('button', { name: 'Close', exact: true }).waitFor();
   await page.waitForTimeout(450);
   const geometry = await actions.evaluate(element => {
-    const more = element.querySelector('[aria-label="Card actions"]').getBoundingClientRect();
+    const more = element.querySelector('[aria-label="Element actions"]').getBoundingClientRect();
     const close = element.querySelector('[aria-label="Close"]').getBoundingClientRect();
     const logo = document.querySelector('[aria-label="Mine settings"]').getBoundingClientRect();
     const row = element.closest('.chrome-row').getBoundingClientRect();
@@ -349,7 +349,7 @@ try {
   assert.equal(geometry.bottom, 0);
   // The card's actions and the logo share the top row and do not overlap.
   assert.ok(geometry.logoGap >= 0);
-  await actions.getByRole('button', { name: 'Card actions' }).click();
+  await actions.getByRole('button', { name: 'Element actions' }).click();
   await page.getByRole('menu').waitFor();
   await page.keyboard.press('Escape');
   await actions.getByRole('button', { name: 'Close', exact: true }).click();

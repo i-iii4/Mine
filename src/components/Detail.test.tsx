@@ -4,21 +4,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DeleteMediaAssetDialog,
   Detail,
-  MediaAssetCollectionPicker,
   computeHoverPreviewPosition,
   deleteMediaFileDescription,
   detailContentFullWidth,
   hoverPreviewBounds,
 } from "./Detail";
 import { DETAIL_CONTENT_MAX_WIDTH_PX, detailLayout } from "@/lib/detailLayout";
-import type { CardAssociationGroup, CardAssociationKind, IndexedBlock, LightBlock, MediaAssetRef } from "@/types";
+import type { CardAssociationGroup, CardAssociationKind, IndexedBlock, LightBlock, MediaAssetRef, MenuPanelToSource, MenuSpec } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
+import { MENU_MODE_STORAGE_KEY } from "@/lib/menuMode";
+import { MENU_PANEL_TO_SOURCE_EVENT } from "@/lib/menuPanelProtocol";
+import { resetMenuPanelSourceForTests } from "@/lib/menuPanelSource";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
+import { NewCardCollectionPicker } from "./NewCardCollectionPicker";
 import { ActionFailureNoticeStack } from "./ActionFailureNotices";
 import { clearActionFailures } from "@/lib/actionFailures";
 import { cancelSourceVideoDownload, copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, listCardAssociations, prepareDeleteMediaAsset, resolveNoteLink, sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
@@ -265,10 +268,25 @@ describe("Detail source video independent of card kind", () => {
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open Original", "Copy Link", "Download Media", "Delete Embed"]);
   });
 
-  it("opens the source video menu as a context menu at the pointer", async () => {
+  // SPEC_MENU_WINDOW.md, МО10, МО68: a menu a right click opens on the page
+  // is a dropdown off an anchor of no size on the point, its corner there.
+  it("opens the source video menu at the pointer, its corner on the point", async () => {
     const { container } = renderVideoDetail();
     fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!, { clientX: 200, clientY: 120 });
-    expect(await screen.findByRole("menu")).toHaveAttribute("data-slot", "context-menu-content");
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveAttribute("data-source-video-menu");
+    expect([menu.getAttribute("data-side"), menu.getAttribute("data-align")]).toEqual(["right", "start"]);
+    const anchor = menu.ownerDocument.querySelector<HTMLElement>("div.fixed.size-0");
+    expect([anchor?.style.left, anchor?.style.top]).toEqual(["200px", "120px"]);
+  });
+
+  it("does not offer Download Media while the video downloads", async () => {
+    vi.mocked(sourceVideoDownloadStatus).mockResolvedValueOnce({ state: "downloading", percent: 40 });
+    const { container } = renderVideoDetail();
+    await waitFor(() => expect(container.querySelector("[data-source-video-download='downloading']")).not.toBeNull());
+    fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!);
+    expect(await screen.findByRole("menuitem", { name: "Download Media" })).toHaveAttribute("data-disabled");
+    expect(screen.getByRole("menuitem", { name: "Copy Link" })).not.toHaveAttribute("data-disabled");
   });
 
   it("opens the menu when the shell reports a right click inside the player frame, and only then", async () => {
@@ -1087,7 +1105,9 @@ describe("Detail", () => {
   });
 
   it("stacks at once when the full-width content, the panel, its line and four insets do not fit", async () => {
-    setViewportWidth(1095);
+    // Four 16px insets, the shell's interval (user's decision of 15.11.2026),
+    // 680, the panel and its line: 1065; one pixel less.
+    setViewportWidth(1064);
 
     const { container } = render(
       <Detail
@@ -1178,7 +1198,7 @@ describe("Detail", () => {
   });
 
   it("keeps the content beside the panel up to the last pixel that fits", () => {
-    setViewportWidth(1129);
+    setViewportWidth(4 * 16 + DETAIL_CONTENT_MAX_WIDTH_PX + 321);
     const { container } = render(
       <Detail
         block={block({ body: "Article body" })}
@@ -1327,7 +1347,7 @@ describe("Detail", () => {
       const relatedCard = label.parentElement;
       expect(relatedCard).toHaveAttribute("data-related-notes-block");
       expect(relatedCard?.parentElement).toHaveAttribute("data-metadata-sections");
-      expect(relatedCard?.parentElement).toHaveClass("gap-[var(--edge-rhythm,32px)]");
+      expect(relatedCard?.parentElement).toHaveClass("gap-[var(--shell-rhythm)]");
       // One card shell for both: the two cannot drift apart.
       const metadataCard = document.querySelector("[data-detail-metadata-card]");
       expect(relatedCard).toHaveAttribute("data-detail-panel-card");
@@ -1380,7 +1400,7 @@ describe("Detail", () => {
     const sections = container.querySelector("[data-metadata-sections]");
     const actionRow = container.querySelector("[data-detail-action-row]");
     const relatedNotesBlock = container.querySelector("[data-related-notes-block]");
-    expect(sections).toHaveClass("gap-[var(--edge-rhythm,32px)]");
+    expect(sections).toHaveClass("gap-[var(--shell-rhythm)]");
     // Buttons on the box: 8 px off the frame (its 4 and their own 4), 4 off
     // each other and off the row above.
     expect(actionRow).toHaveClass(
@@ -2142,8 +2162,9 @@ describe("Detail", () => {
 
     fireEvent.contextMenu(image!, { clientX: 140, clientY: 90 });
     const contextMenu = await screen.findByRole("menu");
-    // A right click opens a context menu at the pointer, not the ellipsis menu.
-    expect(contextMenu).toHaveAttribute("data-slot", "context-menu-content");
+    // A right click opens the menu at the pointer, not the ellipsis menu.
+    expect(contextMenu).toHaveAttribute("data-detail-media-context-menu");
+    expect([contextMenu.getAttribute("data-side"), contextMenu.getAttribute("data-align")]).toEqual(["right", "start"]);
     expect(container.querySelector("[data-detail-media-more-button]")).toHaveAttribute("aria-expanded", "false");
     expect(within(contextMenu).getByText("Create Element")).toBeInTheDocument();
     expect(within(contextMenu).getByText("Rename Media...")).toBeInTheDocument();
@@ -2181,7 +2202,7 @@ describe("Detail", () => {
   });
 
   // The collection rows of Create Element are the rows of the menu they open
-  // in: a dropdown row in a context menu has no menu of its own and throws.
+  // in: a row of another menu's kind has no menu of its own and throws.
   it("opens Create Element from the right click menu of a body video", async () => {
     const onCreateMediaAssetCard = vi.fn().mockResolvedValue(undefined);
     const b = block({
@@ -2212,14 +2233,14 @@ describe("Detail", () => {
     expect(frame.querySelector("video")).toBeTruthy();
     fireEvent.contextMenu(frame, { clientX: 60, clientY: 40 });
     const contextMenu = await screen.findByRole("menu");
-    expect(contextMenu).toHaveAttribute("data-slot", "context-menu-content");
+    expect(contextMenu).toHaveAttribute("data-detail-media-context-menu");
     fireEvent.click(within(contextMenu).getByText("Create Element"));
     const picker = await screen.findByPlaceholderText("Search collections...");
-    const submenu = picker.closest("[data-slot='context-menu-sub-content']") as HTMLElement;
+    const submenu = picker.closest("[data-slot='dropdown-menu-sub-content']") as HTMLElement;
     expect(submenu).toBeTruthy();
     const rows = within(submenu).getAllByRole("menuitem");
     expect(rows.map((row) => row.textContent)).toEqual(["Everything", "Biology"]);
-    rows.forEach((row) => expect(row).toHaveAttribute("data-slot", "context-menu-item"));
+    rows.forEach((row) => expect(row).toHaveAttribute("data-slot", "dropdown-menu-item"));
     fireEvent.click(rows[1]!);
     await waitFor(() => expect(onCreateMediaAssetCard).toHaveBeenCalledWith(
       expect.objectContaining({ media_ref: "post-img0.mp4", media_kind: "video" }),
@@ -2228,25 +2249,13 @@ describe("Detail", () => {
   });
 
   it("uses the shared quantized list height for Create Element from image", () => {
-    const asset: MediaAssetRef = {
-      media_ref: "photo.jpg",
-      media_kind: "image",
-      source_slug: "test-block",
-      reference_kind: "frontmatter_file",
-    };
     render(
       <DropdownMenu open modal={false}>
         <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
         <DropdownMenuContent className={COLLECTION_PICKER_CONTENT_CLASS}>
-          <MediaAssetCollectionPicker
-            Item={DropdownMenuItem}
-            asset={asset}
-            tags={Array.from({ length: 12 }, (_, index) => ({
-              tag: `channel-${index}`,
-              count: index,
-            }))}
-            onConnect={vi.fn()}
-            onCreateAndConnect={vi.fn()}
+          <NewCardCollectionPicker
+            collections={Array.from({ length: 12 }, (_, index) => `channel-${index}`)}
+            onChoose={vi.fn(async () => null)}
           />
         </DropdownMenuContent>
       </DropdownMenu>,
@@ -2721,7 +2730,7 @@ describe("Detail", () => {
     expect(container.querySelector("[data-detail-media-action-menu]")).toBeNull();
     fireEvent.contextMenu(video!, { clientX: 120, clientY: 80 });
     const menu = await screen.findByRole("menu");
-    expect(menu).toHaveAttribute("data-slot", "context-menu-content");
+    expect(menu).toHaveAttribute("data-detail-media-context-menu");
     expect(within(menu).getByText("Delete Media")).toBeInTheDocument();
   });
 
@@ -3086,7 +3095,7 @@ describe("Detail", () => {
     expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
     movePointerOnto(first!);
     expect(first).toHaveClass("state-active");
-    expect(commands(first!)).toEqual(["Card actions", "Source", "Connect"]);
+    expect(commands(first!)).toEqual(["Element actions", "Source", "Connect"]);
     expect(first!.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
     // The line stops short of three buttons: 3 × 24 + 2 × 4 + 8.
     expect((first!.querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("88px");
@@ -3096,14 +3105,14 @@ describe("Detail", () => {
     fireEvent.pointerMove(second!);
     expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
     expect(first).not.toHaveClass("state-active");
-    expect(commands(second!)).toEqual(["Card actions", "Connect"]);
+    expect(commands(second!)).toEqual(["Element actions", "Connect"]);
     // A name alone stops short of two buttons: 2 × 24 + 4 + 8.
     expect((second!.querySelector("[data-card-row-line]") as HTMLElement).style.paddingRight).toBe("60px");
 
     // The menu holds its row; the pointer on its way out moves nothing.
     fireEvent.pointerLeave(second!);
     fireEvent.pointerMove(first!);
-    fireEvent.pointerDown(within(first!).getByRole("button", { name: "Card actions" }), {
+    fireEvent.pointerDown(within(first!).getByRole("button", { name: "Element actions" }), {
       button: 0,
       ctrlKey: false,
     });
@@ -3114,7 +3123,7 @@ describe("Detail", () => {
     });
 
     fireEvent.pointerMove(first!);
-    fireEvent.pointerDown(within(first!).getByRole("button", { name: "Card actions" }), {
+    fireEvent.pointerDown(within(first!).getByRole("button", { name: "Element actions" }), {
       button: 0,
       ctrlKey: false,
     });
@@ -3331,6 +3340,41 @@ describe("Detail", () => {
     );
 
     expect(container.querySelector("[data-detail-cloud-state]")).toBeNull();
+  });
+
+  // «Отказ чтения»: the index marks a card in iCloud only while it has no
+  // preview, so the original of a card with a preview is asked about.
+  it("names the file's state when the system says an original that would not load is in iCloud", async () => {
+    vi.mocked(icloudDownloadProgress).mockResolvedValue({ status: "not_downloaded", percent: null });
+    const { container } = render(<Detail {...cloudImageProps(false)} />);
+
+    await act(async () => {
+      fireEvent.error(
+        container.querySelector('[data-detail-image] img:not([data-detail-preview-backing])') as HTMLImageElement,
+      );
+    });
+
+    expect(icloudDownloadProgress).toHaveBeenCalledWith("photo.jpg");
+    const offline = container.querySelector('[data-detail-cloud-state="offline"]');
+    expect(offline).toHaveTextContent("Original is in iCloud, not available offline");
+    expect(screen.getByText("Try again")).toBeInTheDocument();
+  });
+
+  it("shows the download of an original that has not arrived when the system says it is coming down", async () => {
+    vi.useFakeTimers();
+    vi.mocked(icloudDownloadProgress).mockResolvedValue({ status: "downloading", percent: 40 });
+    const { container } = render(<Detail {...cloudImageProps(false)} />);
+    expect(container.querySelector("[data-detail-cloud-state]")).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1600);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    const downloading = container.querySelector('[data-detail-cloud-state="downloading"]');
+    expect(downloading).toHaveTextContent("Downloading from iCloud · 40%");
   });
 
   it("waits before saying anything about a download in progress", () => {
@@ -3558,7 +3602,7 @@ describe("Detail association blocks", () => {
     const onOpenAuthorFeed = vi.fn();
     const { container } = renderOpenCard({ onOpenAuthorFeed });
     const heading = await screen.findByRole("button", { name: "@kotecinho" });
-    expect(heading).toHaveAttribute("title", "All cards by @kotecinho");
+    expect(heading).toHaveAttribute("title", "All elements by @kotecinho");
     fireEvent.click(heading);
     expect(onOpenAuthorFeed).toHaveBeenCalledWith("@kotecinho");
 
@@ -4261,5 +4305,206 @@ describe("an open card's picture whose record has a wrong size", () => {
     expect(frame.getAttribute("style")).toBe(geometry);
     expect(frame.style.aspectRatio).toBe("1600 / 1200");
     expect(contentWidth()).toBe(width);
+  });
+});
+
+/// SPEC_MENU_WINDOW.md, group В: the menus of an open card's content go to
+/// the menu panel when the menu mode is `window`, each with its one
+/// description, and their choices come back to the card's own handlers.
+describe("an open card's menus in the menu panel", () => {
+  interface OpenRequest {
+    anchor: { x: number; y: number; width: number; height: number };
+    opener: unknown;
+    spec: MenuSpec;
+    size: { width: number; height: number };
+  }
+
+  function opens(): OpenRequest[] {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === "menu_panel_open")
+      .map(([, args]) => (args as { request: OpenRequest }).request);
+  }
+
+  function invokes(name: string) {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === name).map(([, args]) => args);
+  }
+
+  function toSource(menu: number, seq: number, body: MenuPanelToSource) {
+    act(() => {
+      const payload = { menu, seq, body };
+      window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_SOURCE_EVENT, { detail: { event: MENU_PANEL_TO_SOURCE_EVENT, payload } }));
+    });
+  }
+
+  function ids(spec: MenuSpec): string[] {
+    return spec.entries.map((entry) => ("id" in entry ? entry.id : entry.kind));
+  }
+
+  function renderImage(handlers: { onCreateMediaAssetCard?: () => Promise<void>; onRenameMediaAsset?: () => Promise<void> } = {}) {
+    return render(<Detail
+      block={block({ card_kind: "media", block_type: "image", media_file: "photo.jpg", url: null })}
+      vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[{ tag: "Biology", count: 3 }]} currentTag="Biology"
+      onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+      onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+      onCreateMediaAssetCard={handlers.onCreateMediaAssetCard} onRenameMediaAsset={handlers.onRenameMediaAsset} />);
+  }
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation((command) =>
+      Promise.resolve(command === "menu_panel_close" ? { closed: true, key_returned: true } : null));
+    window.localStorage.setItem(MENU_MODE_STORAGE_KEY, "window");
+    resetMenuPanelSourceForTests(true);
+    copyMediaAssetToClipboardMock.mockReset();
+    copyMediaAssetToClipboardMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    resetMenuPanelSourceForTests();
+  });
+
+  it("asks the panel for a picture's menu off its ellipsis, the frame counted with the note of a failed copy", async () => {
+    const { container } = renderImage();
+    const trigger = container.querySelector<HTMLElement>("[data-detail-media-more-button]")!;
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    expect(opens()).toHaveLength(1);
+    expect(opens()[0]?.opener).toEqual({ kind: "plate" });
+    expect(ids(opens()[0]!.spec)).toEqual(["create", "separator", "reveal", "copy-path", "copy-media", "separator", "rename", "remove", "delete"]);
+    // Seven rows and two separators, and one line of text more.
+    expect(opens()[0]?.size).toEqual({ width: 240, height: 10 + 7 * 32 + 2 * 9 + 28 });
+    await waitFor(() => expect(trigger.getAttribute("data-state")).toBe("open"));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("asks the panel for the same menu at the point of a right click, and nothing opens on the page", async () => {
+    const { container } = renderImage();
+    const frame = container.querySelector<HTMLElement>("[data-detail-media-action-frame]")!;
+    const allowed = fireEvent.contextMenu(frame, { clientX: 60, clientY: 40 });
+    // The page's own menu never opens.
+    expect(allowed).toBe(false);
+    expect(opens()).toHaveLength(1);
+    expect(opens()[0]?.anchor).toEqual({ x: 60, y: 40, width: 0, height: 0 });
+    expect(opens()[0]?.opener).toEqual({ kind: "point" });
+    expect(ids(opens()[0]!.spec)).toEqual(["create", "separator", "reveal", "copy-path", "copy-media", "separator", "rename", "remove", "delete"]);
+    await act(async () => {});
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(container.querySelector("[data-detail-media-more-button]")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("carries out the panel's choices with the card's handlers, and tells the panel why a copy failed", async () => {
+    copyMediaAssetToClipboardMock.mockRejectedValueOnce({ kind: "media_not_found", media_ref: "photo.jpg" });
+    const onCreateMediaAssetCard = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce({ kind: "internal", message: "The disk is full." });
+    const { container } = renderImage({ onCreateMediaAssetCard });
+    fireEvent.contextMenu(container.querySelector<HTMLElement>("[data-detail-media-action-frame]")!, { clientX: 60, clientY: 40 });
+    await waitFor(() => expect(opens()).toHaveLength(1));
+
+    // Copy Media keeps the menu open: the panel hears the menu anew, with
+    // the note under the row.
+    toSource(1, 1, { kind: "action", request: 1, action: { kind: "run", id: "copy-media" } });
+    await waitFor(() => expect(copyMediaAssetToClipboardMock).toHaveBeenCalledWith("photo.jpg"));
+    await waitFor(() => expect(invokes("menu_panel_update")).not.toEqual([]));
+    const update = invokes("menu_panel_update").at(-1) as { spec: MenuSpec };
+    expect(update.spec.entries[5]).toEqual({ kind: "note", text: "Media file was not found.", tone: "error" });
+
+    // Create Element: a card of the file in the collection chosen, then in
+    // none; a card that could not be made is answered with why.
+    const create = (request: number, collection: string | null) => toSource(1, request, {
+      kind: "action",
+      request,
+      action: { kind: "widget", id: "create.picker", action: { kind: "create_card", collection, new_collection: false } },
+    });
+    create(2, "Biology");
+    await waitFor(() => expect(onCreateMediaAssetCard).toHaveBeenCalledWith(expect.objectContaining({ media_ref: "photo.jpg" }), "Biology"));
+    await waitFor(() => expect(invokes("menu_panel_answer")).toContainEqual({ menu: 1, request: 2, answer: { kind: "done" } }));
+    create(3, null);
+    await waitFor(() => expect(onCreateMediaAssetCard).toHaveBeenLastCalledWith(expect.objectContaining({ media_ref: "photo.jpg" }), ""));
+    await waitFor(() => expect(invokes("menu_panel_answer")).toContainEqual({ menu: 1, request: 3, answer: { kind: "failed", message: "The disk is full." } }));
+
+    // A command with a window of its own: the window opens on the card's page.
+    toSource(1, 4, { kind: "action", request: 4, action: { kind: "run", id: "rename" } });
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("asks the panel for Create Element of a selected text, and the bar goes once the card is made", async () => {
+    const onTextSelectionDrop = vi.fn()
+      .mockRejectedValueOnce({ kind: "stale_selection" })
+      .mockResolvedValueOnce(undefined);
+    const { container } = render(<Detail
+      block={block({ body: "Alpha beta gamma", body_hash: "body-hash-1" })}
+      vaultPath="/tmp/test-vault" thumbsRootPath="/tmp/thumbs" tags={[{ tag: "Biology", count: 3 }]}
+      onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+      onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+      onTextSelectionDrop={onTextSelectionDrop} />);
+    const paragraph = container.querySelector("p")!;
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild!, "Alpha ".length);
+    range.setEnd(paragraph.firstChild!, "Alpha beta".length);
+    Object.defineProperty(range, "getClientRects", {
+      value: vi.fn(() => [{ left: 40, right: 140, top: 20, bottom: 40, width: 100, height: 20 }]),
+    });
+    Object.defineProperty(paragraph, "getBoundingClientRect", {
+      value: vi.fn(() => ({ left: 40, right: 200, top: 20, bottom: 40, width: 160, height: 20 })),
+    });
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    const createButton = await screen.findByRole("button", { name: "Create Element" });
+
+    fireEvent.pointerDown(createButton, { button: 0, ctrlKey: false });
+    expect(opens()).toHaveLength(1);
+    // The picker is the whole menu, its left edge on the button's.
+    expect(opens()[0]?.opener).toEqual({ kind: "plate" });
+    expect(opens()[0]?.spec).toEqual({
+      role: "search",
+      entries: [{ kind: "widget", id: "create.picker", widget: { kind: "new_card_picker", collections: ["Biology"], current: null } }],
+    });
+    await waitFor(() => expect(createButton.getAttribute("data-state")).toBe("open"));
+    expect(screen.queryByPlaceholderText("Search collections...")).toBeNull();
+
+    const choose = (request: number) => toSource(1, request, {
+      kind: "action",
+      request,
+      action: { kind: "widget", id: "create.picker", action: { kind: "create_card", collection: "Biology", new_collection: false } },
+    });
+    // A card that could not be made keeps the menu and the bar: the picker
+    // hears why.
+    choose(1);
+    await waitFor(() => expect(invokes("menu_panel_answer")).toEqual([
+      { menu: 1, request: 1, answer: { kind: "failed", message: "The note changed. Select the text again." } },
+    ]));
+    expect(invokes("menu_panel_close")).toEqual([]);
+    expect(document.querySelector("[data-text-selection-action-bar]")).not.toBeNull();
+    // The card is made: the card's page closes the menu, and the bar goes.
+    choose(2);
+    await waitFor(() => expect(onTextSelectionDrop).toHaveBeenLastCalledWith(expect.objectContaining({ selectedText: "beta" }), "Biology"));
+    await waitFor(() => expect(invokes("menu_panel_close")).toEqual([expect.objectContaining({ menu: 1, reason: "source" })]));
+    await waitFor(() => expect(document.querySelector("[data-text-selection-action-bar]")).toBeNull());
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it("asks the panel for an embedded video's menu at the point, and follows a download that starts under it", async () => {
+    vi.mocked(youtubePlayerUrl).mockResolvedValue("http://localhost:4321/youtube/9KDDhAOyv9k");
+    const { container } = renderVideoDetail();
+    const allowed = fireEvent.contextMenu(container.querySelector("[data-source-video-surface]")!, { clientX: 200, clientY: 120 });
+    expect(allowed).toBe(false);
+    expect(opens()).toHaveLength(1);
+    expect(opens()[0]?.anchor).toEqual({ x: 200, y: 120, width: 0, height: 0 });
+    expect(opens()[0]?.opener).toEqual({ kind: "point" });
+    expect(ids(opens()[0]!.spec)).toEqual(["open-original", "copy-link", "download", "separator", "delete-embed"]);
+    await act(async () => {});
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    // The download starts elsewhere: the menu in the panel no longer offers it.
+    act(() => {
+      window.dispatchEvent(new CustomEvent("source-video-download", { detail: { payload: { slug: "test-block", state: "preparing" } } }));
+    });
+    await waitFor(() => expect(invokes("menu_panel_update")).not.toEqual([]));
+    const update = invokes("menu_panel_update").at(-1) as { spec: MenuSpec };
+    expect(update.spec.entries[2]).toMatchObject({ id: "download", disabled: true });
+
+    toSource(1, 1, { kind: "action", request: 1, action: { kind: "run", id: "delete-embed" } });
+    expect(await screen.findByText("Delete embed from element?")).toBeInTheDocument();
   });
 });

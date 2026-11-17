@@ -246,7 +246,7 @@ describe("DropdownMenu off its button's plate", () => {
     return { x: Number(match[1]), y: Number(match[2]) };
   }
 
-  it("opens 4px under a chrome button's plate, not under its row-tall box, flush with the plate's right edge", async () => {
+  it("opens 4px under a chrome button's plate, not under its row-tall box, flush with the plate's left edge", async () => {
     // A 40px chrome row: the button's box fills it, its 24px plate is centred.
     const rect = placeBoxes((element) => {
       if (element.hasAttribute("data-chrome-plate")) return { top: 8, right: 124, bottom: 32, left: 100 };
@@ -261,15 +261,53 @@ describe("DropdownMenu off its button's plate", () => {
               <span>icon</span>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent>
             <DropdownMenuItem>Action item</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>,
       );
       fireEvent.pointerDown(screen.getByRole("button", { name: "Display options" }), { button: 0, ctrlKey: false });
-      // The menu has no size in jsdom: its right edge is its x.
-      await waitFor(() => expect(menuPosition()).toEqual({ x: 124, y: 36 }));
+      // Right and down off the plate (SPEC_MENU_WINDOW.md, МО7).
+      await waitFor(() => expect(menuPosition()).toEqual({ x: 100, y: 36 }));
     } finally {
+      rect.mockRestore();
+    }
+  });
+
+  // SPEC_MENU_WINDOW.md, МО7, МО69 (user's decision of 16.11.2026): where
+  // the window's right edge leaves the menu no room, it turns onto the
+  // plate's right edge.
+  it("turns onto the plate's right edge where the window's right edge leaves no room", async () => {
+    const rect = placeBoxes((element) => (
+      element.getAttribute("data-slot") === "dropdown-menu-trigger" ? { top: 10, right: 724, bottom: 34, left: 700 } : null
+    ));
+    // The surface is its role's 240 px; Radix measures nothing in jsdom.
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("data-slot") === "dropdown-menu-content" ? 240 : 0;
+    });
+    const innerWidth = window.innerWidth;
+    window.innerWidth = 940;
+    try {
+      render(
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button>More</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>,
+      );
+      fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0, ctrlKey: false });
+      // 700 + 240 passes 940 less the 8 px edge: the menu stands on the
+      // plate's right edge. The menu has no size in jsdom: its right edge
+      // is its x.
+      await waitFor(() => expect(menuPosition()).toEqual({ x: 724, y: 38 }));
+      const surface = document.querySelector("[data-slot='dropdown-menu-content']");
+      expect(surface?.getAttribute("data-align")).toBe("end");
+    } finally {
+      window.innerWidth = innerWidth;
+      width.mockRestore();
       rect.mockRestore();
     }
   });
@@ -284,7 +322,7 @@ describe("DropdownMenu off its button's plate", () => {
           <DropdownMenuTrigger asChild>
             <Button>Connect</Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
+          <DropdownMenuContent>
             <DropdownMenuItem>Action item</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>,
@@ -309,14 +347,13 @@ describe("DropdownMenu off its button's plate", () => {
           <DropdownMenuTrigger asChild>
             <button type="button" aria-hidden="true" tabIndex={-1} />
           </DropdownMenuTrigger>
-          <DropdownMenuContent anchor="point" align="end">
+          <DropdownMenuContent anchor="point">
             <DropdownMenuItem>Action item</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>,
       );
       await waitFor(() => expect(menuPosition()).toEqual({ x: 300, y: 200 }));
-      // Right of the point, its top on it, whatever edge the call site names
-      // for a button's menu.
+      // Right of the point, its top on it: a button's edge is not its.
       const surface = document.querySelector("[data-slot='dropdown-menu-content']");
       expect([surface?.getAttribute("data-side"), surface?.getAttribute("data-align")]).toEqual(["right", "start"]);
     } finally {
@@ -338,7 +375,7 @@ describe("DropdownMenu off its button's plate", () => {
               <span>icon</span>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start">
+          <DropdownMenuContent side="top">
             <DropdownMenuItem>Action item</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>,

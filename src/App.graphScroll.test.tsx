@@ -99,7 +99,6 @@ vi.mock("@/lib/commands", async (importOriginal) => {
     })),
     listTaxonomySnapshot: vi.fn(async () => TAXONOMY),
     listCardAssociations: vi.fn(async (slug: string) => ({ generation: 1, slug, groups: [] })),
-    getGridRows: vi.fn(async () => ({ path: "/vault", generation: 1, blocks: [] })),
     getTabBootstrap: vi.fn(async () => null),
     reportTabView: vi.fn(async () => {}),
     reportTabHistory: vi.fn(async () => {}),

@@ -42,6 +42,12 @@ function readCollectionOrder(): readonly TagCount[] {
   return collectionOrder;
 }
 
+/** The sidebar's order now, outside a render: a card drawn in the outside
+ *  window takes it from this page (SPEC_OUTSIDE_WINDOW.md, НО7). */
+export function currentCollectionOrder(): readonly TagCount[] {
+  return collectionOrder;
+}
+
 export function useCollectionOrder(): readonly TagCount[] {
   return useSyncExternalStore(subscribeCollectionOrder, readCollectionOrder, readCollectionOrder);
 }

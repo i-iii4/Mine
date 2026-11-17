@@ -197,7 +197,7 @@ try {
   {
     const page = await fresh();
     const item = page.locator('[data-feed-grid-item-slug="card-5"]');
-    const more = item.locator('[aria-label="Card actions"]');
+    const more = item.locator('[aria-label="Element actions"]');
     const box = await item.boundingBox();
     await page.mouse.move(box.x + 20, box.y + 20, { steps: 3 });
     await settle(page, 150);
@@ -250,7 +250,7 @@ try {
   // The keyboard's own way to the button keeps its ring.
   {
     const page = await fresh();
-    const more = page.locator('[data-feed-grid-item-slug="card-5"] [aria-label="Card actions"]');
+    const more = page.locator('[data-feed-grid-item-slug="card-5"] [aria-label="Element actions"]');
     await page.keyboard.press("Shift");
     await more.evaluate((el) => el.focus());
     await page.keyboard.press("Enter");

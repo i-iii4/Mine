@@ -357,3 +357,139 @@ describe("getVisibleItemsFromIndex — matches brute force filter", () => {
   });
 });
 
+// SPEC_GRID.md, «Кэш при карточке и продолжение раскладки»: a layout that
+// goes on from another one is the layout made from the first item.
+describe("computeMasonryLayout going on from a layout", () => {
+  /** The same numbers for the same seed on every run. */
+  function random(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+  const heightsOf = (count: number, next: () => number) =>
+    Array.from({ length: count }, () => 60 + Math.floor(next() * 400));
+
+  it("places a page added to the end from the columns' heights", () => {
+    const next = random(11);
+    const before = heightsOf(500, next);
+    const held = computeMasonryLayout(before, 1180, MIN_COL, GAP);
+    const columnOf = (index: number) => held.positions[index]?.column;
+    const grown = [...before, ...heightsOf(40, next)];
+
+    const continued = computeMasonryLayout(grown, 1180, MIN_COL, GAP, columnOf, { layout: held, keep: before.length });
+
+    expect(continued).toEqual(computeMasonryLayout(grown, 1180, MIN_COL, GAP, columnOf));
+    before.forEach((_, index) => expect(continued.positions[index]).toBe(held.positions[index]));
+    expect(continued.positions).not.toBe(held.positions);
+  });
+
+  it("goes on from the first item whose height changed, and keeps the items that did not move", () => {
+    const next = random(12);
+    const before = heightsOf(300, next);
+    const held = computeMasonryLayout(before, 1180, MIN_COL, GAP);
+    const columnOf = (index: number) => held.positions[index]?.column;
+    const changedAt = 120;
+    const after = before.map((height, index) => (index === changedAt ? height + 37 : height));
+
+    const continued = computeMasonryLayout(after, 1180, MIN_COL, GAP, columnOf, { layout: held, keep: changedAt });
+
+    expect(continued).toEqual(computeMasonryLayout(after, 1180, MIN_COL, GAP, columnOf));
+    const column = held.positions[changedAt]!.column;
+    continued.positions.forEach((position, index) => {
+      const moved = index >= changedAt && position.column === column;
+      if (moved) expect(position).not.toBe(held.positions[index]);
+      else expect(position).toBe(held.positions[index]);
+    });
+  });
+
+  it("is the layout made from the first item on random lists, kept counts and remembered columns", () => {
+    for (const seed of [21, 22, 23, 24, 25, 26, 27, 28]) {
+      const next = random(seed);
+      const width = 500 + Math.floor(next() * 1000);
+      const gap = [8, 16, 32][Math.floor(next() * 3)]!;
+      const before = heightsOf(20 + Math.floor(next() * 200), next);
+      const held = computeMasonryLayout(before, width, MIN_COL, gap);
+      // Some items leave, some change their height, a few arrive at the end.
+      const stays = before.map(() => next() > 0.03);
+      const kept: { was: number; height: number }[] = [];
+      before.forEach((height, index) => {
+        if (stays[index]) kept.push({ was: index, height: next() < 0.05 ? height + 11 : height });
+      });
+      const heights = [...kept.map((item) => item.height), ...heightsOf(Math.floor(next() * 30), next)];
+      const columnOf = (index: number) => (index < kept.length ? held.positions[kept[index]!.was]!.column : undefined);
+      // The items vouched for: the same place, the same height.
+      let keep = 0;
+      while (keep < kept.length && kept[keep]!.was === keep && kept[keep]!.height === before[keep]) keep += 1;
+
+      const expected = computeMasonryLayout(heights, width, MIN_COL, gap, columnOf);
+      for (const vouched of [keep, Math.floor(keep / 2), 0]) {
+        expect(computeMasonryLayout(heights, width, MIN_COL, gap, columnOf, { layout: held, keep: vouched })).toEqual(expected);
+      }
+      // Without remembered columns only an untouched head may be vouched for.
+      const plain = computeMasonryLayout(heights, width, MIN_COL, gap);
+      expect(computeMasonryLayout(heights, width, MIN_COL, gap, undefined, { layout: held, keep })).toEqual(plain);
+    }
+  });
+
+  it("falls back to a layout made anew when the remembered columns break the feed's shape", () => {
+    const before = [100, 100, 100, 100, 100, 100];
+    const held = computeMasonryLayout(before, 760, MIN_COL, GAP);
+    expect(held.positions.map((position) => position.column)).toEqual([0, 1, 2, 0, 1, 2]);
+    // Only the items of the last column remain: by memory they would leave
+    // the first two columns empty.
+    const kept = [2, 5];
+    const columnOf = (index: number) => held.positions[kept[index]!]?.column;
+    const heights = kept.map((index) => before[index]!);
+
+    const continued = computeMasonryLayout(heights, 760, MIN_COL, GAP, columnOf, { layout: held, keep: 0 });
+
+    expect(continued).toEqual(computeMasonryLayout(heights, 760, MIN_COL, GAP, columnOf));
+    expect(continued.positions.map((position) => position.column)).toEqual([0, 1]);
+  });
+
+  it("keeps the array of positions when no item moved, in a layout object of its own", () => {
+    const heights = heightsOf(80, random(31));
+    const held = computeMasonryLayout(heights, 1180, MIN_COL, GAP);
+    const columnOf = (index: number) => held.positions[index]?.column;
+
+    for (const keep of [heights.length, 40, 0]) {
+      const again = computeMasonryLayout([...heights], 1180, MIN_COL, GAP, columnOf, { layout: held, keep });
+      expect(again).not.toBe(held);
+      expect(again.positions).toBe(held.positions);
+      expect(again.totalHeight).toBe(held.totalHeight);
+    }
+    // One item fewer is another array, of the same position objects.
+    const shorter = computeMasonryLayout(heights.slice(0, -1), 1180, MIN_COL, GAP, columnOf, { layout: held, keep: heights.length - 1 });
+    expect(shorter.positions).not.toBe(held.positions);
+    shorter.positions.forEach((position, index) => expect(position).toBe(held.positions[index]));
+  });
+
+  it("takes position objects from the layout named to reuse", () => {
+    const next = random(41);
+    const before = heightsOf(60, next);
+    const held = computeMasonryLayout(before, 1180, MIN_COL, GAP);
+    const columnOf = (index: number) => held.positions[index]?.column;
+    const grown = [...before, ...heightsOf(10, next)];
+    const first = computeMasonryLayout(grown, 1180, MIN_COL, GAP, columnOf, { layout: held, keep: before.length });
+    // The last item's height changes: the others of the page stand.
+    const regrown = [...grown.slice(0, -1), grown[grown.length - 1]! + 5];
+
+    const second = computeMasonryLayout(regrown, 1180, MIN_COL, GAP, columnOf, { layout: held, keep: before.length, reuse: first });
+
+    expect(second).toEqual(computeMasonryLayout(regrown, 1180, MIN_COL, GAP, columnOf));
+    second.positions.slice(0, -1).forEach((position, index) => expect(position).toBe(first.positions[index]));
+    expect(second.positions[second.positions.length - 1]).not.toBe(first.positions[first.positions.length - 1]);
+  });
+
+  it("takes nothing from a layout of other columns", () => {
+    const heights = heightsOf(50, random(51));
+    const held = computeMasonryLayout(heights, 1180, MIN_COL, GAP);
+
+    const narrower = computeMasonryLayout(heights, 900, MIN_COL, GAP, undefined, { layout: held, keep: heights.length });
+
+    expect(narrower).toEqual(computeMasonryLayout(heights, 900, MIN_COL, GAP));
+    narrower.positions.forEach((position, index) => expect(position).not.toBe(held.positions[index]));
+  });
+});

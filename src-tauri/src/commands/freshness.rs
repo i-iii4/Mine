@@ -296,6 +296,21 @@ impl FreshnessCoordinator {
         state.entry(vault_path.to_string()).or_default().dirty = true;
     }
 
+    /// Ask for a pass over the space now, whatever its last one found
+    /// ([`request_pass`]). Returns whether the caller has to start one: a
+    /// pass that is running goes over the space again when it ends, and one
+    /// already asked for has not begun.
+    fn schedule_now(&self, vault_path: &str) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let entry = state.entry(vault_path.to_string()).or_default();
+        entry.dirty = true;
+        if entry.running || entry.scheduled {
+            return false;
+        }
+        entry.scheduled = true;
+        true
+    }
+
     /// An existing derived database is a readable last-good snapshot. Its
     /// first safety reconciliation in this process must not blank the UI.
     pub fn mark_committed_snapshot_available(&self, vault_path: &str) {
@@ -352,6 +367,28 @@ pub async fn ensure_vault_fresh(app: &AppHandle, vault: VaultLayout) -> Result<(
             Ok(())
         }
     }
+}
+
+/// Run a background pass over the space now, without waiting for the
+/// safety interval: the watcher saw what only a pass over the whole space
+/// settles (SPEC_INTEGRATION.md, «Пачки событий и точное перечитывание»: a
+/// folder event, lost events, a media file gone that may have been renamed,
+/// a note in iCloud to read). Requests made while a pass runs or waits to
+/// run are one pass.
+pub fn request_pass(app: &AppHandle, vault: VaultLayout) {
+    let vault_path = vault.root().to_string_lossy().into_owned();
+    if !app.state::<AppState>().freshness.schedule_now(&vault_path) {
+        return;
+    }
+    let app_for_task = app.clone();
+    let preview_vault = vault.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = app_for_task
+            .state::<AppState>()
+            .freshness
+            .reconcile_scheduled(&vault);
+        publish_freshness_outcome(&app_for_task, preview_vault, outcome);
+    });
 }
 
 fn publish_freshness_outcome(

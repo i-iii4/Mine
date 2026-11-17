@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { cardConnectSpec, cardMenuSpec, type CardMenuPicker } from "./cardMenuEntries";
 import { FLOATING_LAYER_EDGE_PX, MENU_PLATE_GAP_PX, MENU_POINT_OFFSET_PX } from "./floatingLayer";
-import { COLLECTION_PICKER_MAX_HEIGHT_PX, MENU_SHADOW_FIELD_PX, MENU_WIDTH_PX, menuSpecSize } from "./menuSpec";
-import type { MenuSpec } from "@/types";
+import { groupConnectSpec, groupSelectionSpec } from "./groupSelectionMenu";
+import { COLLECTION_PICKER_MAX_HEIGHT_PX, MENU_SHADOW_FIELD_PX, MENU_WIDTH_PX, SPACE_LIST_MAX_HEIGHT_PX, menuActionCloses, menuItem, menuSpecSize, menuSubmenu } from "./menuSpec";
+import type { MenuSpec, MenuWidgetAction } from "@/types";
 
 const PICKER: CardMenuPicker = { card: "card", selected: [], tags: [{ tag: "Web", count: 1 }], currentTag: null };
 
@@ -49,9 +50,117 @@ describe("menuSpecSize", () => {
     expect(menuSpecSize(cardConnectSpec(PICKER))).toEqual({ size: { width: 300, height: 303 }, submenus: [] });
   });
 
+  it("counts a caption and a line of text as one line each, and a selection's picker as a card's", () => {
+    const picker = { cards: ["one", "two"], tags: [{ tag: "Web", count: 1 }], lookup: new Map<string, string[]>() };
+    const plain = groupSelectionSpec({ count: 2, inCollection: true, error: null, picker });
+    // The caption 28, a separator 9, Connect, Disconnect, Merge and Delete.
+    expect(menuSpecSize(plain).size).toEqual({ width: 240, height: 10 + 28 + 9 + 4 * 32 });
+    // Connect's row starts under the caption and the separator.
+    expect(menuSpecSize(plain).submenus).toEqual([{ row_top: 5 + 28 + 9, width: 300, height: 303 }]);
+    const failed = groupSelectionSpec({ count: 2, inCollection: true, error: "The index is busy.", picker });
+    expect(menuSpecSize(failed).size.height).toBe(menuSpecSize(plain).size.height + 9 + 28);
+    expect(menuSpecSize(groupConnectSpec(picker)).size).toEqual({ width: 300, height: 303 });
+  });
+
   it("counts an empty menu as its surface alone", () => {
     const empty: MenuSpec = { role: "action", entries: [] };
     expect(menuSpecSize(empty)).toEqual({ size: { width: 240, height: 10 }, submenus: [] });
+  });
+});
+
+describe("a command's row", () => {
+  it("is an ordinary one that closes its menu, but for what is said of it", () => {
+    expect(menuItem("reveal", "Reveal in Finder")).toEqual({
+      kind: "item",
+      id: "reveal",
+      label: "Reveal in Finder",
+      icon: null,
+      variant: "default",
+      truncate: false,
+      disabled: false,
+      stays_open: false,
+      plain: false,
+      detail: null,
+    });
+    // A row of a menu with no column of icons.
+    expect(menuItem("appearance", "Appearance", { plain: true })).toMatchObject({ icon: null, plain: true });
+    expect(menuItem("delete", "Delete", { icon: "trash", variant: "destructive", disabled: true })).toMatchObject({
+      icon: "trash",
+      variant: "destructive",
+      disabled: true,
+      stays_open: false,
+    });
+  });
+
+  it("closes the menu unless its row keeps it open, in the menu or in a submenu of it", () => {
+    const spec: MenuSpec = {
+      role: "action",
+      entries: [
+        menuItem("copy", "Copy", { stays_open: true }),
+        menuItem("reveal", "Reveal in Finder"),
+        menuSubmenu("more", "More", { role: "action", entries: [menuItem("pin", "Pin", { stays_open: true }), menuItem("rename", "Rename")] }),
+      ],
+    };
+    expect(["copy", "reveal", "pin", "rename"].map((id) => menuActionCloses(spec, { kind: "run", id }))).toEqual([false, true, false, true]);
+  });
+
+  it("opens a menu beside it, with an empty leading slot unless it is plain", () => {
+    const content: MenuSpec = { role: "action", entries: [] };
+    expect(menuSubmenu("more", "More", content)).toEqual({ kind: "submenu", id: "more", label: "More", icon: null, plain: false, content });
+    expect(menuSubmenu("menus", "Menus", content, { plain: true })).toMatchObject({ icon: null, plain: true });
+  });
+
+  it("is two lines of text tall with a second line under its label", () => {
+    const plain: MenuSpec = { role: "action", entries: [menuItem("remove", "Remove Space")] };
+    const detailed: MenuSpec = { role: "action", entries: [menuItem("remove", "Remove Space", { detail: "Files stay on disk" })] };
+    expect(menuSpecSize(plain).size.height).toBe(10 + 32);
+    expect(menuSpecSize(detailed).size.height).toBe(10 + 40);
+  });
+});
+
+describe("a choice of a value and a switch", () => {
+  const select: MenuSpec = {
+    role: "action",
+    entries: [
+      { kind: "radio", id: "space", value: "a", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }], closes: true },
+      { kind: "radio", id: "sort", value: "newest", options: [{ value: "newest", label: "Newest first" }], closes: false },
+      { kind: "checkbox", id: "links", label: "Wikilinks", checked: true },
+      menuSubmenu("menus", "Menus", {
+        role: "action",
+        entries: [{ kind: "radio", id: "menus.mode", value: "web", options: [{ value: "web", label: "Web" }], closes: true }],
+      }),
+    ],
+  };
+
+  it("close the menu only where the choice's group says so; a switch and a widget's asking never do", () => {
+    expect(menuActionCloses(select, { kind: "choose", id: "space", value: "b" })).toBe(true);
+    expect(menuActionCloses(select, { kind: "choose", id: "sort", value: "newest" })).toBe(false);
+    expect(menuActionCloses(select, { kind: "choose", id: "menus.mode", value: "web" })).toBe(true);
+    expect(menuActionCloses(select, { kind: "choose", id: "absent", value: "x" })).toBe(false);
+    expect(menuActionCloses(select, { kind: "check", id: "links", checked: false })).toBe(false);
+    expect(menuActionCloses(select, { kind: "widget", id: "picker", action: { kind: "create_collection", name: "Web" } })).toBe(false);
+  });
+});
+
+describe("the list of spaces", () => {
+  const spec: MenuSpec = {
+    role: "search",
+    entries: [{ kind: "widget", id: "spaces", widget: { kind: "space_list", spaces: [], unavailable: [], tabs: true } }],
+  };
+
+  it("counts at its tallest: the field, eight rows with the list's inset, the line and the two pinned actions", () => {
+    expect(SPACE_LIST_MAX_HEIGHT_PX).toBe(41 + (8 * 32 + 8) + (1 + 8 + 2 * 32));
+    expect(menuSpecSize(spec).size).toEqual({ width: 300, height: 378 + 2 });
+  });
+
+  it("ends the menu on a space chosen, a space to forget and the pinned actions, not on a folder shown", () => {
+    const closes = (action: MenuWidgetAction) => menuActionCloses(spec, { kind: "widget", id: "spaces", action });
+    expect(closes({ kind: "switch_space", path: "/a", new_tab: false })).toBe(true);
+    expect(closes({ kind: "switch_space", path: "/a", new_tab: true })).toBe(true);
+    expect(closes({ kind: "forget_space", path: "/a" })).toBe(true);
+    expect(closes({ kind: "reveal_current_space" })).toBe(true);
+    expect(closes({ kind: "add_space" })).toBe(true);
+    expect(closes({ kind: "reveal_space", path: "/a" })).toBe(false);
   });
 });
 

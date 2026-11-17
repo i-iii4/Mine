@@ -1,7 +1,6 @@
 import { MissingAwareImage } from "./MissingAwareImage";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listenPage } from "@/lib/pageEvents";
-import { Trash2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,17 +12,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { Progress } from "@/components/ui/progress";
 import { COPY_LINK_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
+import { sourceVideoMenuItemId, sourceVideoSpec } from "@/lib/openCardMenus";
 import { openLinkInBrowser } from "@/lib/systemActions";
 import {
   cancelSourceVideoDownload,
@@ -33,6 +25,11 @@ import {
   type SourceVideoDownloadState,
 } from "@/lib/commands";
 import type { YoutubeSource } from "@/lib/youtubeSource";
+import type { MenuAction, MenuAnswer } from "@/types";
+import { SpecPointMenu, type SpecPointMenuHandle } from "./SpecPointMenu";
+
+/** What marks the source video menu on the page. */
+const SOURCE_VIDEO_MENU_SURFACE = { "data-source-video-menu": "" } as const;
 
 /** Emitted by the shell when a right click lands inside an embedded frame. */
 export const SOURCE_VIDEO_CONTEXT_MENU_EVENT = "source-video-context-menu";
@@ -65,9 +62,10 @@ function restoredDownload(status: SourceVideoDownloadState | null) {
  *  It lives in a local page, not in this document: YouTube needs a referrer
  *  that the interface origin cannot send (player error 153).
  *  A right click on it opens the source video menu at the pointer, like any
- *  context menu in Mine: on the poster the page sees the click itself; inside
- *  the player frame the shell reports the point, and it is replayed here as a
- *  `contextmenu` event at that point.
+ *  menu a right click opens in Mine, in the menu panel or on the page
+ *  (SPEC_MENU_WINDOW.md, В4): on the poster the page sees the click itself;
+ *  inside the player frame the shell reports the point, and it is replayed
+ *  here as a `contextmenu` event at that point.
  *  Download Media runs in the shell; this surface shows its progress and, once
  *  the file is in the space, asks the card to reload so the local video takes
  *  over. See SPEC_MEDIA_ASSET_ACTIONS.md «Меню видео источника». */
@@ -83,6 +81,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [download, setDownload] = useState<SourceVideoDownloadState | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<SpecPointMenuHandle>(null);
   const downloadedRef = useRef(onDownloaded);
   downloadedRef.current = onDownloaded;
 
@@ -155,59 +154,66 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
     });
   };
 
+  // The video's menu, as data (src/lib/openCardMenus.ts): Download Media
+  // cannot be chosen while a download runs, and a menu open meanwhile
+  // follows it.
+  const menuSpec = useMemo(() => sourceVideoSpec({ downloading: running }), [running]);
+  const actOnMenu = async (action: MenuAction): Promise<MenuAnswer> => {
+    if (action.kind !== "run") return { kind: "done" };
+    switch (sourceVideoMenuItemId(action.id)) {
+      case "open-original":
+        openSource(source.sourceUrl);
+        break;
+      case "copy-link":
+        copyTextToClipboard(source.sourceUrl, COPY_LINK_FAILED_TITLE);
+        break;
+      case "download":
+        if (!running) startDownload();
+        break;
+      case "delete-embed":
+        setDeleteOpen(true);
+        break;
+      case null:
+        break;
+    }
+    return { kind: "done" };
+  };
+
   return (
     <div className="mb-6" data-youtube-source-player={source.videoId}>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div
-            ref={surfaceRef}
-            className="relative aspect-video overflow-hidden rounded-1 bg-black"
-            data-source-video-surface
-            onContextMenu={(event) => event.stopPropagation()}
-          >
-            {page.status === "ready" ? (
-              <iframe
-                src={page.url}
-                title={`${title} on YouTube`}
-                className="h-full w-full"
-                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                allowFullScreen
-              />
-            ) : (
-              <>
-                {/* A poster that will not load leaves the black frame (Е6.8). */}
-                {poster && <MissingAwareImage src={poster} className="absolute h-full w-full object-contain" />}
-                {page.status === "failed" && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <p className="rounded-1 bg-black/70 px-3 py-2 text-sm text-white">This video can't play inside Mine.</p>
-                  </div>
-                )}
-              </>
+      <div
+        ref={surfaceRef}
+        className="relative aspect-video overflow-hidden rounded-1 bg-black"
+        data-source-video-surface
+        onContextMenu={(event) => {
+          // The menu opens here, at the pointer, asked for in this handler;
+          // the card's own does not open over it, nor the page's.
+          event.preventDefault();
+          event.stopPropagation();
+          menuRef.current?.open({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        {page.status === "ready" ? (
+          <iframe
+            src={page.url}
+            title={`${title} on YouTube`}
+            className="h-full w-full"
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+          />
+        ) : (
+          <>
+            {/* A poster that will not load leaves the black frame (Е6.8). */}
+            {poster && <MissingAwareImage src={poster} className="absolute h-full w-full object-contain" />}
+            {page.status === "failed" && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <p className="rounded-1 bg-black/70 px-3 py-2 text-sm text-white">This video can't play inside Mine.</p>
+              </div>
             )}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent data-source-video-menu>
-          <ContextMenuItem onSelect={() => openSource(source.sourceUrl)}>
-            <MenuIconSlot />
-            Open Original
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => copyTextToClipboard(source.sourceUrl, COPY_LINK_FAILED_TITLE)}>
-            <MenuIconSlot />
-            Copy Link
-          </ContextMenuItem>
-          <ContextMenuItem disabled={running} onSelect={startDownload}>
-            <MenuIconSlot />
-            Download Media
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-            <MenuIconSlot>
-              <Trash2 className="size-[13px]" />
-            </MenuIconSlot>
-            Delete Embed
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+          </>
+        )}
+      </div>
+      <SpecPointMenu handleRef={menuRef} spec={menuSpec} act={actOnMenu} surface={SOURCE_VIDEO_MENU_SURFACE} />
       <SourceVideoDownloadRow
         download={download}
         onRetry={startDownload}

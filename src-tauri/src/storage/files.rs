@@ -18,7 +18,7 @@ use crate::domain::block::{
 };
 use crate::domain::vault::{ThumbLevel, VaultLayout};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
-use crate::storage::{article_audio, index, media_refs, thumbnails};
+use crate::storage::{article_audio, cloud_files, index, media_refs, thumbnails};
 
 mod replacement_metadata;
 
@@ -558,7 +558,7 @@ mod link_repair_tests {
 pub fn read_media_head(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let mut head = Vec::with_capacity(IMAGE_HEAD_LEN);
-    std::fs::File::open(path)?
+    cloud_files::open(path)?
         .take(IMAGE_HEAD_LEN as u64)
         .read_to_end(&mut head)?;
     Ok(head)
@@ -877,7 +877,7 @@ fn read_saved_write_layout(
     vault: &VaultLayout,
     read: crate::space_registry::CloudRead,
 ) -> Result<crate::domain::vault::VaultWriteLayout> {
-    use crate::storage::{cloud_files, layout_copy};
+    use crate::storage::layout_copy;
     let marker = vault.write_layout_path();
     validate_vault_write_target(vault, &marker)?;
     let stamp = match std::fs::metadata(&marker) {
@@ -1006,9 +1006,7 @@ pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, Stri
         .with_context(|| format!("invalid vault-relative file path: {}", path.display()))?;
     #[cfg(test)]
     NOTE_READS.with(|reads| reads.borrow_mut().push(path.to_path_buf()));
-    #[cfg(debug_assertions)]
-    crate::storage::cloud_files::test_seam::note_read(path);
-    let content = std::fs::read_to_string(path)
+    let content = cloud_files::read_to_string(path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
     Ok((slug, content))

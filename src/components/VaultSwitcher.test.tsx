@@ -1,11 +1,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { VaultSwitcher } from "./VaultSwitcher";
+import { invoke } from "@tauri-apps/api/core";
+import { SPACE_LIST_ID, VaultSwitcher, spaceMenuSpec } from "./VaultSwitcher";
+import { MENU_MODE_STORAGE_KEY } from "@/lib/menuMode";
+import { MENU_PANEL_TO_SOURCE_EVENT } from "@/lib/menuPanelProtocol";
+import { resetMenuPanelSourceForTests } from "@/lib/menuPanelSource";
 import { MOTION_LEVELS, MOTION_MENU_BLINK_MS } from "@/lib/motion";
 import { MENU_BLINK_ATTRIBUTE, setMenuBlinkMsForTests } from "@/lib/menuBlink";
 import { setMotionLevel } from "@/test/motionLevel";
-import type { SpaceEntry } from "@/types";
+import type { MenuSpec, MenuWidgetAction, SpaceEntry } from "@/types";
 
 it.each(["pointer", "keyboard"])("refreshes externally added spaces when opened by %s", async (input) => {
   commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine"]);
@@ -850,6 +854,158 @@ describe("VaultSwitcher", () => {
       expect(menu()).toBeNull();
       await advance(MOTION_MENU_BLINK_MS * 2);
       expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/// SPEC_MENU_WINDOW.md, Г1: with the menu mode Window the space menu opens
+/// in the menu panel, the list of spaces as its one widget, and what the
+/// list asks comes back to the switcher's own handlers.
+describe("the space menu in the menu panel", () => {
+  const MINE = "/spaces/Mine";
+  const TEST = "/spaces/Тест";
+  const LEGACY = "/spaces/Old";
+  const GONE = "/spaces/Gone";
+
+  function opens() {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === "menu_panel_open")
+      .map(([, args]) => (args as { request: { opener: unknown; spec: MenuSpec; size: unknown; by_key: boolean } }).request);
+  }
+
+  function invokes(name: string) {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === name).map(([, args]) => args);
+  }
+
+  let asked = 0;
+  function ask(action: MenuWidgetAction) {
+    asked += 1;
+    const request = asked;
+    act(() => {
+      const payload = { menu: 1, seq: request, body: { kind: "action", request, action: { kind: "widget", id: SPACE_LIST_ID, action } } };
+      window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_SOURCE_EVENT, { detail: { event: MENU_PANEL_TO_SOURCE_EVENT, payload } }));
+    });
+  }
+
+  async function openInPanel(onOpenInNewTab?: (vaultId: string) => void) {
+    const onVaultSelected = vi.fn();
+    commandMocks.listKnownVaults.mockResolvedValue([MINE, TEST, LEGACY]);
+    commandMocks.listSpaces.mockResolvedValue([
+      { vault_id: "mine-id", path: MINE, name: "Mine", available: true, current: true },
+      { vault_id: "test-id", path: TEST, name: "Тест", available: true, current: false },
+      { vault_id: null, path: LEGACY, name: "Old", available: true, current: false },
+      { vault_id: "gone-id", path: GONE, name: "Gone", available: false, current: false },
+    ]);
+    render(<VaultSwitcher currentPath={MINE} onVaultSelected={onVaultSelected} onOpenInNewTab={onOpenInNewTab} surface="topChrome" />);
+    // The lists are read on mount: the menu opens with them.
+    await waitFor(() => expect(commandMocks.listSpaces).toHaveBeenCalled());
+    await act(async () => {});
+    const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
+    fireEvent.click(trigger);
+    return { onVaultSelected, trigger };
+  }
+
+  beforeEach(() => {
+    asked = 0;
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation((command) =>
+      Promise.resolve(command === "menu_panel_close" ? { closed: true, key_returned: true } : null));
+    window.localStorage.setItem(MENU_MODE_STORAGE_KEY, "window");
+    resetMenuPanelSourceForTests(true);
+    commandMocks.selectVault.mockReset();
+    commandMocks.selectVault.mockResolvedValue(undefined);
+    commandMocks.listSpaces.mockClear();
+    commandMocks.forgetKnownVault.mockReset();
+    commandMocks.forgetKnownVault.mockResolvedValue([]);
+    revealItemInDir.mockReset();
+    revealItemInDir.mockResolvedValue(undefined);
+    vi.mocked(openDialog).mockReset();
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(MENU_MODE_STORAGE_KEY);
+    resetMenuPanelSourceForTests();
+  });
+
+  it("asks the panel for the list of spaces off the trigger's plate, under it and to its left edge", async () => {
+    const { trigger } = await openInPanel(vi.fn());
+    expect(opens()).toHaveLength(1);
+    expect(opens()[0]?.opener).toEqual({ kind: "plate" });
+    expect(opens()[0]?.spec).toEqual(spaceMenuSpec(
+      // The space on screen is no destination; a space never opened has no
+      // identity and cannot open in a new tab.
+      [{ path: TEST, name: "Тест", tab: true }, { path: LEGACY, name: "Old", tab: false }],
+      [{ path: GONE, name: "Gone", tab: false }],
+      true,
+    ));
+    // The list at its tallest: the field, eight rows, the pinned actions.
+    expect(opens()[0]?.size).toEqual({ width: 300, height: 380 });
+    await waitFor(() => expect(trigger.getAttribute("data-state")).toBe("open"));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("opens the space the panel chose in a new tab, and takes its menu away", async () => {
+    const onOpenInNewTab = vi.fn();
+    await openInPanel(onOpenInNewTab);
+    ask({ kind: "switch_space", path: TEST, new_tab: true });
+    await act(async () => {});
+    expect(onOpenInNewTab).toHaveBeenCalledExactlyOnceWith("test-id");
+    expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    expect(invokes("menu_panel_close")).toEqual([expect.objectContaining({ menu: 1, reason: "source" })]);
+  });
+
+  it("opens no tab for a space with no identity", async () => {
+    const onOpenInNewTab = vi.fn();
+    await openInPanel(onOpenInNewTab);
+    ask({ kind: "switch_space", path: LEGACY, new_tab: true });
+    await act(async () => {});
+    expect(onOpenInNewTab).not.toHaveBeenCalled();
+    expect(commandMocks.selectVault).not.toHaveBeenCalled();
+  });
+
+  it("goes to the space the panel chose in this tab", async () => {
+    const onOpenInNewTab = vi.fn();
+    const { onVaultSelected } = await openInPanel(onOpenInNewTab);
+    ask({ kind: "switch_space", path: TEST, new_tab: false });
+    await waitFor(() => expect(commandMocks.selectVault).toHaveBeenCalledExactlyOnceWith(TEST));
+    await waitFor(() => expect(onVaultSelected).toHaveBeenCalledExactlyOnceWith(TEST));
+    expect(onOpenInNewTab).not.toHaveBeenCalled();
+  });
+
+  it("shows a space's folder and keeps the menu, and takes the menu away for the pinned actions", async () => {
+    await openInPanel();
+    ask({ kind: "reveal_space", path: TEST });
+    await waitFor(() => expect(revealItemInDir).toHaveBeenCalledWith(TEST));
+    expect(invokes("menu_panel_close")).toEqual([]);
+
+    ask({ kind: "reveal_current_space" });
+    await waitFor(() => expect(revealItemInDir).toHaveBeenLastCalledWith(MINE));
+    expect(invokes("menu_panel_close")).toEqual([expect.objectContaining({ menu: 1, reason: "source" })]);
+  });
+
+  it("asks for a folder on Add space, and asks before taking a space off the list", async () => {
+    vi.mocked(openDialog).mockResolvedValue(null);
+    await openInPanel();
+    ask({ kind: "forget_space", path: TEST });
+    const dialog = await screen.findByRole("alertdialog");
+    expect(commandMocks.forgetKnownVault).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(commandMocks.forgetKnownVault).toHaveBeenCalledWith(TEST));
+
+    ask({ kind: "add_space" });
+    await waitFor(() => expect(openDialog).toHaveBeenCalledTimes(1));
+  });
+
+  it("sends the panel the list anew when the spaces change under the open menu", async () => {
+    await openInPanel();
+    await waitFor(() => expect(opens()).toHaveLength(1));
+    // A space is taken off the list under the open menu: the panel hears
+    // the list without it.
+    commandMocks.forgetKnownVault.mockResolvedValue([MINE, TEST]);
+    ask({ kind: "forget_space", path: LEGACY });
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+    await waitFor(() => {
+      const last = (invokes("menu_panel_update").at(-1) as { spec: MenuSpec } | undefined)?.spec.entries[0];
+      expect(last?.kind === "widget" && last.widget.kind === "space_list" && last.widget.spaces.map((space) => space.name)).toEqual(["Тест"]);
     });
   });
 });

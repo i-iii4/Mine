@@ -50,7 +50,12 @@ Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SE
   восстановления. Индекс, которого нет, который ещё строится (`ready = 0`)
   или повреждён, чтение называет и отвечает кодом 3: «the index of <путь> is
   not built yet; open the space in Mine to build it» или «… is damaged; open
-  the space in Mine to rebuild it». До 13.10.2026 чтение создавало индекс
+  the space in Mine to rebuild it». Индекс другой версии схемы чтение тоже
+  называет и не читает: «… was written by another version of Mine; open the
+  space in Mine to update it» (16.11.2026; тест
+  `reading_an_index_of_another_schema_version_says_so` в `cli.rs`). Без
+  этой проверки запрос к индексу прежней версии кончался ошибкой SQLite о
+  таблице, которой в нём нет. До 13.10.2026 чтение создавало индекс
   пространства, которое приложение ни разу не открывало, и запускало полную
   сверку недостроенного (SPEC_DEEP_AUDIT.md, Е2.21; тест
   `reading_builds_no_index_and_reconciles_nothing` в `cli.rs`). Мутации

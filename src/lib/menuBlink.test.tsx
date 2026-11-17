@@ -9,12 +9,6 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -197,28 +191,6 @@ describe("the blink of a chosen menu item", () => {
     advance(MOTION_MENU_BLINK_MS);
     expect(onAction).not.toHaveBeenCalled();
     expect(menu()).not.toBeNull();
-  });
-
-  it("blinks a context menu's item too", async () => {
-    const onRename = vi.fn();
-    render(
-      <ContextMenu>
-        <ContextMenuTrigger>Card</ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={onRename}>Rename</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>,
-    );
-    const card = screen.getByText("Card");
-    fireEvent.pointerDown(card, { button: 2 });
-    fireEvent.contextMenu(card);
-    vi.useFakeTimers();
-    choose("Rename", "pointer");
-    expect(screen.getByRole("menuitem", { name: "Rename" })).toHaveAttribute(MENU_BLINK_ATTRIBUTE);
-    expect(onRename).not.toHaveBeenCalled();
-    advance(MOTION_MENU_BLINK_MS);
-    expect(onRename).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('[data-slot="context-menu-content"]')).toBeNull();
   });
 });
 

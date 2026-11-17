@@ -11,6 +11,7 @@ pub mod cloud_waits;
 pub mod cold_space_audit;
 pub mod db;
 pub mod derived_preview;
+pub mod feed_changes;
 pub mod files;
 pub mod file_identity;
 pub mod graph;

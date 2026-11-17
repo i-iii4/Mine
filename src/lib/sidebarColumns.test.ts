@@ -67,11 +67,10 @@ describe("sidebar zone contract", () => {
     );
   });
 
-  it("lets a compact row's field and label start where its name starts (user's decision of 05.11.2026)", () => {
+  it("lets a compact row's field start where its name starts (user's decision of 05.11.2026)", () => {
     // No column moves the name: the columns stand Name, Previews, Count
     // (user's decision of 15.11.2026).
     expect(css).not.toContain("--sidebar-name-left");
-    expect(css).toMatch(/\[data-sidebar-create-channel-row-body\] \{\s*padding-left: var\(--spacing-s3\);/);
     expect(css).toMatch(/\[data-sidebar-editable-row-ghost\] \{\s*display: none;\s*visibility: hidden;/);
   });
 
@@ -94,7 +93,8 @@ describe("sidebar zone contract", () => {
     // the look the width gives (sidebarLook.ts), with no threshold of its own.
     expect(sidebarLookAt(below - 0.1)).toBe("compact");
     expect(sidebarLookAt(below)).toBe("table");
-    expect(css).toContain(':where([data-sidebar-look="compact"]:not([data-sidebar-morph]))');
+    expect(css).toContain(':where([data-sidebar-look="compact"])');
+    expect(css).toContain(':is([data-sidebar-scroll], [data-sidebar-drag-row])[data-sidebar-look="compact"]');
     const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
     expect(rules).not.toMatch(/@container|container(-name|-type)?:/);
     expect(rules).not.toContain(`${below}px`);

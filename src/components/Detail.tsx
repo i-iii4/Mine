@@ -13,7 +13,6 @@ import {
   useState,
   useMemo,
   type ComponentProps,
-  type ComponentType,
   type CSSProperties,
   type HTMLAttributes,
   type PointerEvent as ReactPointerEvent,
@@ -31,7 +30,6 @@ import {
   MoreHorizontal,
   Plus,
   Trash2,
-  Unlink,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -63,23 +61,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -91,6 +74,9 @@ import type {
   IndexedBlock,
   LightBlock,
   MediaAssetRef,
+  MenuAction,
+  MenuAnswer,
+  MenuSpec,
   TagCount,
 } from "@/types";
 import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, markdownSourceOffset } from "@/lib/markdownWikilinks";
@@ -117,11 +103,11 @@ import { mediaAssetErrorMessage } from "@/lib/mediaAssetErrors";
 import { MissingAwareImage } from "./MissingAwareImage";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
-import { collectionRefLabel } from "@/lib/collections";
-import type { FloatingMenuWidth } from "@/lib/floatingLayer";
+import { menuPlateOf } from "@/lib/floatingLayer";
 import { useHoverIntent, type HoverIntentHandle } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
-import { hoverPreviewBesidePanel, type HoverPreviewElementTarget } from "@/lib/hoverPreviewWindow";
+import { hoverPreviewBesidePanel, hoverPreviewOutsideBesidePanel, type HoverPreviewElementTarget } from "@/lib/hoverPreviewWindow";
+import { outsideCardContent, outsideLook } from "@/lib/outsidePreviewSource";
 import { RestingPointer } from "@/lib/restingPointer";
 import {
   findPreviewTileForSource,
@@ -155,9 +141,8 @@ import {
 import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
-import { CardMoreMenu } from "./CardHoverMenu";
+import { CardConnectMenu, CardMoreMenu } from "./CardHoverMenu";
 import { noFocusBackAfterPress } from "@/lib/openMenus";
-import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
   CARD_REFERENCE_ROW_ESTIMATED_HEIGHT_PX,
   CARD_REFERENCE_ROW_GAP_PX,
@@ -177,12 +162,8 @@ import { useDetailFrame } from "./detailFrame";
 import type { EditorTextSelection } from "./editing/NoteEditor";
 import { EditorImagePlacementContext } from "./editing/editorImagePlacement";
 import { actOnReadingElement, clickEvent } from "./reading/readingIntents";
-import {
-  COLLECTION_PICKER_CONTENT_CLASS,
-  CollectionPicker,
-} from "./CollectionPicker";
-import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
-import { SearchMenuInput } from "./SearchMenuInput";
+import { MenuSpecView, menuSurfaceClass } from "./MenuSpecView";
+import { SpecPointMenu, type SpecPointMenuHandle } from "./SpecPointMenu";
 import { microPreviewFromIndexedBlock, microPreviewFromLightBlock } from "./MicroPreviewThumbnail";
 import { CardRow } from "./CardRow";
 import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
@@ -192,6 +173,8 @@ import { associationHeading, authorFeedHint } from "@/lib/cardAssociations";
 import { useCardAssociations } from "@/hooks/useCardAssociations";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
 import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
+import { mediaAssetSpec, mediaMenuItemId, newCardSpec } from "@/lib/openCardMenus";
+import { useSpecMenu } from "@/hooks/useSpecMenu";
 import {
   READ_ELEMENT_FAILED_TITLE,
   dismissActionFailure,
@@ -206,7 +189,8 @@ import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 // either side of it are at least one inset; past that the view stacks at
 // once, content centred and the panel's cards under it, centred and no wider
 // than the reading column. Scroll content and fixed metadata share one grid's
-// columns; insets and the top offset follow the app-wide edge rhythm.
+// columns; insets and the top offset are the shell's interval (global.css,
+// `--card-content-pad`).
 const DETAIL_RAIL_GRID_CLASSES = "grid w-full pt-[var(--card-content-pad)]";
 /// The fixed panel layer's grid: one row as tall as the open card, so the
 /// panel's column is bounded by it and scrolls its own cards (Р8). The top
@@ -217,8 +201,9 @@ const DETAIL_STACKED_LAYOUT_CLASSES =
   "grid min-h-full w-full grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)] grid-rows-[auto_1fr] pt-[var(--card-content-pad)]";
 /// Stacked, the panel's cards are no wider than the reading column (Р4).
 const DETAIL_STACKED_PANEL_STYLE: CSSProperties = { maxWidth: DETAIL_CONTENT_MAX_WIDTH_PX };
-/// `--card-content-pad` until its probe is measured: the default edge rhythm.
-const DETAIL_CONTENT_PAD_FALLBACK_PX = 32;
+/// `--card-content-pad` until its probe is measured: the shell's interval
+/// (global.css, `--shell-rhythm`).
+const DETAIL_CONTENT_PAD_FALLBACK_PX = 16;
 /// The height limit every media frame of the open card reads (Р7).
 const DETAIL_ROOT_STYLE = detailMediaMaxHeightStyle();
 /// A medium whose frame knows its size fills the frame exactly (Р6).
@@ -945,6 +930,13 @@ interface MetadataPanelProps {
   onOpenAuthorFeed?: (author: string) => void;
 }
 
+/** The open card's panel the rows' preview window stands beside: its column,
+ *  or the stacked panel under the content. */
+function detailPanelBox(sections: HTMLElement | null): DOMRect | null {
+  const panel = sections?.closest("[data-detail-panel-column]") ?? sections?.closest("[data-detail-stacked-panel]");
+  return panel?.getBoundingClientRect() ?? null;
+}
+
 function MetadataPanel({
   block,
   fullBlock,
@@ -967,11 +959,15 @@ function MetadataPanel({
   const rowPreview = useHoverPreviewWindow<HoverPreviewElementTarget, LightBlock | IndexedBlock>({
     intent: rowPointer,
     readCard: getBlock,
-    place: hoverPreviewBesidePanel(() => {
-      const sections = panelSectionsRef.current;
-      const panel = sections?.closest("[data-detail-panel-column]") ?? sections?.closest("[data-detail-stacked-panel]");
-      return panel?.getBoundingClientRect() ?? null;
-    }, "before"),
+    place: hoverPreviewBesidePanel(() => detailPanelBox(panelSectionsRef.current), "before"),
+    // No room beside the panel inside the window, as in the stacked card of
+    // a narrow window: the window stands outside (SPEC_OUTSIDE_WINDOW.md, ПН2).
+    outside: hoverPreviewOutsideBesidePanel({
+      panel: () => detailPanelBox(panelSectionsRef.current),
+      side: "before",
+      look: () => outsideLook(vaultPath, resolvedThumbsRoot),
+      content: (card) => outsideCardContent(card),
+    }),
   });
   // A row's menu holds the panel: no preview while it is open (С7.8).
   const rowMenuOpenRef = useRef(false);
@@ -1110,10 +1106,10 @@ function MetadataPanel({
 
         <div
           ref={panelSectionsRef}
-          // The boxes stand as far apart as the feed's cards and the page's
-          // edge: the interface spacing, Display's Spacing (user's decision
-          // of 08.10.2026).
-          className="flex min-w-0 flex-col gap-[var(--edge-rhythm,32px)]"
+          // The boxes stand the shell's interval apart, as the card's insets
+          // do; Display's Spacing is the feed's alone (user's decision of
+          // 15.11.2026).
+          className="flex min-w-0 flex-col gap-[var(--shell-rhythm)]"
           // In the capture phase, so a row answering this step reads this step.
           onPointerMoveCapture={(event) => {
             const stepped = restingPointer.move(event.clientX, event.clientY);
@@ -1284,34 +1280,6 @@ function DetailActionRow({
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
 }) {
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [selectedTags, setSelectedTags] = useState<string[]>(
-    isIndexedBlock(block) ? block.tags : [],
-  );
-
-  useEffect(() => {
-    if (isIndexedBlock(block)) {
-      setSelectedTags(block.tags);
-    }
-  }, [block]);
-
-  useEffect(() => {
-    if (!connectOpen) return;
-    let cancelled = false;
-    void getBlock(block.slug)
-      .then((full) => {
-        if (!cancelled) {
-          setSelectedTags(full?.tags ?? (isIndexedBlock(block) ? block.tags : []));
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to load tags for block:", error);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [block, connectOpen]);
-
   return (
     // Buttons standing on the box, not in a row, keep 8 px off its edge like
     // the feed card's and the chrome's buttons (user's decision of
@@ -1333,30 +1301,27 @@ function DetailActionRow({
         </Button>
       )}
 
-      <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="default"
-            size="default"
-            className="min-w-0 flex-1"
-          >
-            Connect
-            <Plus className="size-[13px]" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">
-          <CollectionPicker
-            blockSlug={block.slug}
-            selectedTags={selectedTags}
-            tags={tags}
-            currentTag={currentTag}
-            onToggleTag={onToggleTag}
-            onCreateAndAssign={onCreateAndAssign}
-            stopKeyPropagation
-          />
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {/* The card's collections: the picker the feed card's plus opens, the
+          card's collections ticked as the card knows them and then as its
+          file says (`useCardMembership`), in the menu panel when the menu
+          mode is `window` (SPEC_MENU_WINDOW.md, А6). */}
+      <CardConnectMenu
+        block={block}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+      >
+        <Button
+          type="button"
+          variant="default"
+          size="default"
+          className="min-w-0 flex-1"
+        >
+          Connect
+          <Plus className="size-[13px]" />
+        </Button>
+      </CardConnectMenu>
     </div>
   );
 }
@@ -2524,6 +2489,20 @@ function MediaAssetActionFrame({
     setCopyWaiting(false);
   }, []);
   useEffect(() => endCopyIndicator, [endCopyIndicator]);
+  // The file's one menu, as data: the ellipsis and the right click open it,
+  // in the menu panel or on the page (SPEC_MENU_WINDOW.md, В1, В2).
+  const mediaMenu = useMediaAssetMenu({
+    asset,
+    vaultPath,
+    tags,
+    currentTag,
+    onCreateMediaAssetCard,
+    onCreateChannelAndMediaAssetCard,
+    onCopyStarted: beginCopyIndicator,
+    onCopySettled: endCopyIndicator,
+    onRequestDialog: setDialog,
+  });
+  const pointMenuRef = useRef<SpecPointMenuHandle>(null);
   const {
     attributes: dragAttributes,
     listeners: dragListeners,
@@ -2559,123 +2538,111 @@ function MediaAssetActionFrame({
     );
   }
 
-  const menuItemProps = {
-    asset,
-    vaultPath,
-    tags,
-    currentTag,
-    onCreateMediaAssetCard,
-    onCreateChannelAndMediaAssetCard,
-    onCopyStarted: beginCopyIndicator,
-    onCopySettled: endCopyIndicator,
-    onRequestDialog: setDialog,
-  };
-
   return (
     <>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
+      <div
+        ref={setDragRef}
+        {...(canDrag ? dragAttributes : {})}
+        {...(canDrag ? dragListeners : {})}
+        className={cn(
+          DETAIL_MEDIA_ACTION_FRAME_CLASSES,
+          "group/detail-media",
+          // No resting cursor of its own: the pointer stays default until a drag
+          // actually starts, and only then becomes grabbing.
+          canDrag && "select-none active:cursor-grabbing",
+          isDragging && "opacity-40",
+          className,
+        )}
+        draggable={false}
+        data-detail-media-action-frame
+        data-detail-inline-media-drag={canDrag ? "true" : undefined}
+        data-media-asset-ref={asset.media_ref}
+        onPointerDown={(event) => {
+          if (!canDrag || event.button !== 0) return;
+          dragPointerListener?.(event);
+          // Suppressing the default here would also suppress the click that
+          // follows, and a click is now how the image opens. The drag sensor
+          // needs an 8px move to engage, so a still press stays a click.
+          if (!canOpenImagePreview) event.preventDefault();
+          window.getSelection()?.removeAllRanges();
+        }}
+        onMouseDown={(event) => {
+          if (canDrag && event.button === 0 && !canOpenImagePreview) {
+            event.preventDefault();
+          }
+        }}
+        onClick={(event) => {
+          // A completed drag never reaches here: dnd-kit swallows the click once
+          // the pointer passes the activation distance.
+          if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
+          const origin = event.currentTarget;
+          // What a click on the picture means is decided with the
+          // editor's (SPEC_EDITING.md, Л11.1).
+          actOnReadingElement({ kind: "image" }, clickEvent(event), {
+            openImagePreview: () => onOpenImagePreview(imagePreviewRequest({
+              src: fullSizeImageSrc,
+              mediaRef: asset.media_ref,
+              siblings: collectCardImages(origin),
+            }, origin, event)),
+          });
+        }}
+        onContextMenu={(event) => {
+          // The menu opens here, at the pointer, asked for in this
+          // handler; an enclosing surface must not open its own menu
+          // over it, and the page's own never opens.
+          event.preventDefault();
+          event.stopPropagation();
+          pointMenuRef.current?.open({ x: event.clientX, y: event.clientY });
+        }}
+        onDragStart={(event) => {
+          if (canDrag) {
+            event.preventDefault();
+          }
+        }}
+      >
+        {children}
+        {copyWaiting && (
           <div
-            ref={setDragRef}
-            {...(canDrag ? dragAttributes : {})}
-            {...(canDrag ? dragListeners : {})}
-            className={cn(
-              DETAIL_MEDIA_ACTION_FRAME_CLASSES,
-              "group/detail-media",
-              // No resting cursor of its own: the pointer stays default until a drag
-              // actually starts, and only then becomes grabbing.
-              canDrag && "select-none active:cursor-grabbing",
-              isDragging && "opacity-40",
-              className,
-            )}
-            draggable={false}
-            data-detail-media-action-frame
-            data-detail-inline-media-drag={canDrag ? "true" : undefined}
-            data-media-asset-ref={asset.media_ref}
-            onPointerDown={(event) => {
-              if (!canDrag || event.button !== 0) return;
-              dragPointerListener?.(event);
-              // Suppressing the default here would also suppress the click that
-              // follows, and a click is now how the image opens. The drag sensor
-              // needs an 8px move to engage, so a still press stays a click.
-              if (!canOpenImagePreview) event.preventDefault();
-              window.getSelection()?.removeAllRanges();
-            }}
-            onMouseDown={(event) => {
-              if (canDrag && event.button === 0 && !canOpenImagePreview) {
-                event.preventDefault();
-              }
-            }}
-            onClick={(event) => {
-              // A completed drag never reaches here: dnd-kit swallows the click once
-              // the pointer passes the activation distance.
-              if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
-              const origin = event.currentTarget;
-              // What a click on the picture means is decided with the
-              // editor's (SPEC_EDITING.md, Л11.1).
-              actOnReadingElement({ kind: "image" }, clickEvent(event), {
-                openImagePreview: () => onOpenImagePreview(imagePreviewRequest({
-                  src: fullSizeImageSrc,
-                  mediaRef: asset.media_ref,
-                  siblings: collectCardImages(origin),
-                }, origin, event)),
-              });
-            }}
-            onContextMenu={(event) => {
-              // The menu opens here, at the pointer; an enclosing surface must not
-              // open its own menu over it.
-              event.stopPropagation();
-            }}
-            onDragStart={(event) => {
-              if (canDrag) {
-                event.preventDefault();
-              }
-            }}
+            className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-card/90 px-3 py-2"
+            data-detail-copy-waiting=""
           >
-            {children}
-            {copyWaiting && (
-              <div
-                className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-card/90 px-3 py-2"
-                data-detail-copy-waiting=""
-              >
-                <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
-                <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
-              </div>
-            )}
-            {/* A video has its own controls under the pointer, and the
-                ellipsis covered them; its menu opens only on right click. */}
-            {asset.media_kind !== "video" && (
-              <div
-                className={mediaControlsClasses(controlsVisible)}
-                data-detail-media-action-menu
-                onClick={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-                onContextMenu={(event) => event.stopPropagation()}
-              >
-                {canOpenImagePreview && fullSizeImageSrc && (
-                  <ExpandImageButton
-                    onExpand={(origin, event) => {
-                      onOpenImagePreview(imagePreviewRequest({
-                        src: fullSizeImageSrc,
-                        mediaRef: asset.media_ref,
-                        siblings: collectCardImages(origin),
-                      }, origin, event));
-                    }}
-                  />
-                )}
-                <MediaAssetMoreMenu
-                  itemProps={menuItemProps}
-                  open={menuOpen}
-                  onOpenChange={setMenuOpen}
-                />
-              </div>
-            )}
+            <CloudDownload className="size-[13px] text-muted-foreground" aria-hidden="true" />
+            <span className="text-sm text-muted-foreground">{CLOUD_DOWNLOADING_LABEL}</span>
           </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent data-detail-media-context-menu>
-          <MediaAssetMenuItems kit={CONTEXT_MENU_KIT} {...menuItemProps} />
-        </ContextMenuContent>
-      </ContextMenu>
+        )}
+        {/* A video has its own controls under the pointer, and the
+            ellipsis covered them; its menu opens only on right click. */}
+        {asset.media_kind !== "video" && (
+          <div
+            className={mediaControlsClasses(controlsVisible)}
+            data-detail-media-action-menu
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.stopPropagation()}
+          >
+            {canOpenImagePreview && fullSizeImageSrc && (
+              <ExpandImageButton
+                onExpand={(origin, event) => {
+                  onOpenImagePreview(imagePreviewRequest({
+                    src: fullSizeImageSrc,
+                    mediaRef: asset.media_ref,
+                    siblings: collectCardImages(origin),
+                  }, origin, event));
+                }}
+              />
+            )}
+            <MediaAssetMoreMenu menu={mediaMenu} onOpenChange={setMenuOpen} />
+          </div>
+        )}
+      </div>
+      <SpecPointMenu
+        handleRef={pointMenuRef}
+        spec={mediaMenu.spec}
+        largest={mediaMenu.largest}
+        act={mediaMenu.act}
+        onOpenChange={mediaMenu.setOpen}
+        surface={MEDIA_CONTEXT_MENU_SURFACE}
+      />
       <RenameMediaAssetDialog
         asset={asset}
         open={dialog === "rename"}
@@ -2777,46 +2744,17 @@ function ExpandableImageFrame({
 
 type MediaAssetDialog = "rename" | "remove" | "delete";
 
-/** The primitives a media menu is drawn with: the ellipsis opens a dropdown,
- *  a right click opens a context menu at the pointer. Same items in both. */
-interface MediaMenuKit {
-  Item: ComponentType<{
-    variant?: "default" | "destructive" | "detach";
-    disabled?: boolean;
-    /** It keeps the menu open and shows its result in place: no blink. */
-    staysOpen?: boolean;
-    className?: string;
-    onSelect?: (event: Event) => void;
-    children?: ReactNode;
-  }>;
-  Separator: ComponentType;
-  Sub: ComponentType<{ open?: boolean; onOpenChange?: (open: boolean) => void; children?: ReactNode }>;
-  SubTrigger: ComponentType<{ children?: ReactNode }>;
-  SubContent: ComponentType<{
-    widthRole?: FloatingMenuWidth;
-    className?: string;
-    children?: ReactNode;
-  }>;
-}
+/** What marks a media file's right click menu on the page. */
+const MEDIA_CONTEXT_MENU_SURFACE = { "data-detail-media-context-menu": "" } as const;
 
-const DROPDOWN_MENU_KIT: MediaMenuKit = {
-  Item: DropdownMenuItem,
-  Separator: DropdownMenuSeparator,
-  Sub: DropdownMenuSub,
-  SubTrigger: DropdownMenuSubTrigger,
-  SubContent: DropdownMenuSubContent,
-};
+/** A line the size of the note that says the file could not be copied: the
+ *  menu's largest state, for the frame of the menu panel. */
+const COPY_ERROR_LINE = "Media file was not found.";
 
-const CONTEXT_MENU_KIT: MediaMenuKit = {
-  Item: ContextMenuItem,
-  Separator: ContextMenuSeparator,
-  Sub: ContextMenuSub,
-  SubTrigger: ContextMenuSubTrigger,
-  SubContent: ContextMenuSubContent,
-};
-
-interface MediaAssetMenuItemProps {
-  asset: MediaAssetRef;
+interface MediaAssetMenuInput {
+  /** The file, or null where the frame holds none: the menu then does
+   *  nothing, and nothing opens it. */
+  asset: MediaAssetRef | null;
   vaultPath: string;
   tags: TagCount[];
   currentTag?: string;
@@ -2827,317 +2765,156 @@ interface MediaAssetMenuItemProps {
   onRequestDialog: (dialog: MediaAssetDialog) => void;
 }
 
-function MediaAssetMenuItems({
-  kit,
-  asset,
-  vaultPath,
-  tags,
-  currentTag,
-  onCreateMediaAssetCard,
-  onCreateChannelAndMediaAssetCard,
-  onCopyStarted,
-  onCopySettled,
-  onRequestDialog,
-  connectSubmenuOpen,
-  onConnectSubmenuOpenChange,
-}: MediaAssetMenuItemProps & {
-  kit: MediaMenuKit;
-  connectSubmenuOpen?: boolean;
-  onConnectSubmenuOpenChange?: (open: boolean) => void;
-}) {
-  const [actionError, setActionError] = useState<string | null>(null);
-  const mediaPath = mediaAbsolutePath(vaultPath, asset.media_ref);
-  const { Item, Separator, Sub, SubTrigger, SubContent } = kit;
-
-  return (
-    <>
-      <Sub open={connectSubmenuOpen} onOpenChange={onConnectSubmenuOpenChange}>
-        <SubTrigger>
-          <MenuIconSlot>
-            <Plus className="size-[13px]" />
-          </MenuIconSlot>
-          Create Element
-        </SubTrigger>
-        <SubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
-          <MediaAssetCollectionPicker
-            Item={Item}
-            asset={asset}
-            tags={tags}
-            currentTag={currentTag}
-            onConnect={onCreateMediaAssetCard}
-            onCreateAndConnect={onCreateChannelAndMediaAssetCard}
-          />
-        </SubContent>
-      </Sub>
-
-      <Separator />
-
-      <Item onSelect={() => revealInFinder(mediaPath)}>
-        <MenuIconSlot />
-        Reveal in Finder
-      </Item>
-      <Item onSelect={() => copyTextToClipboard(mediaPath, COPY_PATH_FAILED_TITLE)}>
-        <MenuIconSlot />
-        Copy Path
-      </Item>
-      <Item
-        staysOpen
-        onSelect={(event) => {
-          event.preventDefault();
-          setActionError(null);
-          onCopyStarted();
-          void copyMediaAssetToClipboard(asset.media_ref)
-            .catch((error) => setActionError(mediaAssetErrorMessage(error)))
-            .finally(onCopySettled);
-        }}
-      >
-        <MenuIconSlot />
-        Copy Media
-      </Item>
-
-      {actionError && (
-        <div className="px-plate py-1.5 text-sm text-destructive">
-          {actionError}
-        </div>
-      )}
-
-      <Separator />
-
-      <Item onSelect={() => onRequestDialog("rename")}>
-        <MenuIconSlot />
-        Rename Media...
-      </Item>
-      <Item variant="detach" onSelect={() => onRequestDialog("remove")}>
-        <MenuIconSlot>
-          <Unlink className="size-[13px]" />
-        </MenuIconSlot>
-        Remove from Element
-      </Item>
-      <Item variant="destructive" onSelect={() => onRequestDialog("delete")}>
-        <MenuIconSlot>
-          <Trash2 className="size-[13px]" />
-        </MenuIconSlot>
-        Delete Media
-      </Item>
-    </>
-  );
+interface MediaAssetMenu {
+  /** The menu as it stands now. */
+  spec: MenuSpec;
+  /** The menu at its largest while open: with the note of a failed copy. */
+  largest: MenuSpec;
+  /** Carry out a choice made in the menu. */
+  act: (action: MenuAction) => Promise<MenuAnswer>;
+  /** The menu opened or closed: one that opens says nothing of the last
+   *  copy. */
+  setOpen: (open: boolean) => void;
 }
 
+/**
+ * A media file's menu (SPEC_MEDIA_ASSET_ACTIONS.md): its description as it
+ * stands now (src/lib/openCardMenus.ts) and the way its choices are carried
+ * out. The description is drawn by `MenuSpecView`, on the page and in the
+ * menu panel alike (SPEC_MENU_WINDOW.md, МО16, МО23). The windows a command
+ * opens are the frame's: the menu only asks for them.
+ */
+function useMediaAssetMenu(input: MediaAssetMenuInput): MediaAssetMenu {
+  const { tags, currentTag } = input;
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const spec = useMemo(
+    () => mediaAssetSpec({ tags, currentTag: currentTag ?? null, copyError }),
+    [tags, currentTag, copyError],
+  );
+  const largest = useMemo(
+    () => (copyError !== null ? spec : mediaAssetSpec({ tags, currentTag: currentTag ?? null, copyError: COPY_ERROR_LINE })),
+    [copyError, spec, tags, currentTag],
+  );
+  // What a choice acts on when it comes: the props as they stand.
+  const now = useRef(input);
+  now.current = input;
+
+  const act = useCallback(async (action: MenuAction): Promise<MenuAnswer> => {
+    const current = now.current;
+    const { asset } = current;
+    if (asset === null) return { kind: "done" };
+    if (action.kind === "run") {
+      const mediaPath = mediaAbsolutePath(current.vaultPath, asset.media_ref);
+      switch (mediaMenuItemId(action.id)) {
+        case "reveal":
+          revealInFinder(mediaPath);
+          break;
+        case "copy-path":
+          copyTextToClipboard(mediaPath, COPY_PATH_FAILED_TITLE);
+          break;
+        case "copy-media":
+          // The menu stays open: why the copy failed stands under the row.
+          setCopyError(null);
+          current.onCopyStarted();
+          void copyMediaAssetToClipboard(asset.media_ref)
+            .catch((error) => setCopyError(mediaAssetErrorMessage(error)))
+            .finally(current.onCopySettled);
+          break;
+        case "rename":
+          current.onRequestDialog("rename");
+          break;
+        case "remove":
+          current.onRequestDialog("remove");
+          break;
+        case "delete":
+          current.onRequestDialog("delete");
+          break;
+        case null:
+          break;
+      }
+      return { kind: "done" };
+    }
+    // Create Element's picker: a new card of the file, in the collection
+    // chosen or in none.
+    if (action.kind !== "widget" || action.action.kind !== "create_card") return { kind: "done" };
+    const { collection, new_collection: create } = action.action;
+    try {
+      if (create && collection !== null) await current.onCreateChannelAndMediaAssetCard(asset, collection);
+      else await current.onCreateMediaAssetCard(asset, collection ?? "");
+      return { kind: "done" };
+    } catch (error) {
+      return { kind: "failed", message: textSelectionErrorMessage(error) };
+    }
+  }, []);
+
+  const setOpen = useCallback((open: boolean) => {
+    if (open) setCopyError(null);
+  }, []);
+
+  return useMemo(() => ({ spec, largest, act, setOpen }), [spec, largest, act, setOpen]);
+}
+
+/** The ellipsis on a picture and the file's menu off it: in the menu panel
+ *  when the menu mode is `window`, else on the page (SPEC_MENU_WINDOW.md, В1). */
 function MediaAssetMoreMenu({
-  itemProps,
-  open,
+  menu,
   onOpenChange,
   className,
 }: {
-  itemProps: MediaAssetMenuItemProps;
-  open: boolean;
+  menu: MediaAssetMenu;
   onOpenChange: (open: boolean) => void;
   className?: string;
 }) {
-  const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
-  const updateRootOpen = useCallback((open: boolean) => {
-    if (!open) {
-      setConnectSubmenuOpen(false);
-    }
-    onOpenChange(open);
-  }, [onOpenChange]);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const { setOpen } = menu;
+  const more = useSpecMenu({
+    spec: menu.spec,
+    largest: menu.largest,
+    act: menu.act,
+    onOpenChange: (open) => {
+      setOpen(open);
+      onOpenChange(open);
+    },
+  });
 
   return (
-    <DropdownMenu open={open} onOpenChange={updateRootOpen} modal={false}>
+    <DropdownMenu
+      open={more.onPage}
+      onOpenChange={(next) => {
+        const button = buttonRef.current;
+        if (!next || button === null) {
+          more.hide();
+          return;
+        }
+        // Asked for now, in the input's handler (МО19).
+        more.show({
+          rect: menuPlateOf(button).getBoundingClientRect(),
+          opener: { kind: "plate" },
+          byKey: lastInputIsKey(),
+          contextMenu: false,
+        });
+      }}
+      modal={false}
+    >
       <DropdownMenuTrigger asChild>
         <Button
+          ref={buttonRef}
           variant="default"
           size="icon"
           className={className}
           aria-label="Media actions"
           data-detail-media-more-button
+          // The menu is open in the panel: the button looks as it does with
+          // its menu open on the page.
+          {...(more.inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
         >
           <MoreHorizontal className="size-[13px]" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <MediaAssetMenuItems
-          kit={DROPDOWN_MENU_KIT}
-          {...itemProps}
-          connectSubmenuOpen={connectSubmenuOpen}
-          onConnectSubmenuOpenChange={setConnectSubmenuOpen}
-        />
+      <DropdownMenuContent>
+        <MenuSpecView spec={menu.spec} dispatch={menu.act} open={more.onPage} />
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-export function MediaAssetCollectionPicker({
-  Item,
-  asset,
-  tags,
-  currentTag,
-  onConnect,
-  onCreateAndConnect,
-}: {
-  /** The row of the menu the picker opens in: a dropdown's row has no menu
-   *  inside a context menu, and React throws on it. */
-  Item: MediaMenuKit["Item"];
-  asset: MediaAssetRef;
-  tags: TagCount[];
-  currentTag?: string;
-  onConnect: (asset: MediaAssetRef, tag: string) => Promise<void>;
-  onCreateAndConnect: (asset: MediaAssetRef, tag: string) => Promise<void>;
-}) {
-  return (
-    <CreateCardCollectionPicker
-      Item={Item}
-      payload={asset}
-      tags={tags}
-      currentTag={currentTag}
-      onConnect={onConnect}
-      onCreateAndConnect={onCreateAndConnect}
-    />
-  );
-}
-
-function TextSelectionCollectionPicker({
-  payload,
-  tags,
-  currentTag,
-  onConnect,
-  onCreateAndConnect,
-}: {
-  payload: MineTextSelectionDragPayload;
-  tags: TagCount[];
-  currentTag?: string;
-  onConnect: (payload: MineTextSelectionDragPayload, tag: string) => void | Promise<void>;
-  onCreateAndConnect: (payload: MineTextSelectionDragPayload, tag: string) => Promise<void>;
-}) {
-  return (
-    <CreateCardCollectionPicker
-      Item={DropdownMenuItem}
-      payload={payload}
-      tags={tags}
-      currentTag={currentTag}
-      onConnect={onConnect}
-      onCreateAndConnect={onCreateAndConnect}
-    />
-  );
-}
-
-function CreateCardCollectionPicker<TPayload>({
-  Item,
-  payload,
-  tags,
-  currentTag,
-  onConnect,
-  onCreateAndConnect,
-}: {
-  Item: MediaMenuKit["Item"];
-  payload: TPayload;
-  tags: TagCount[];
-  currentTag?: string;
-  onConnect: (payload: TPayload, tag: string) => void | Promise<void>;
-  onCreateAndConnect: (payload: TPayload, tag: string) => void | Promise<void>;
-}) {
-  const [search, setSearch] = useState("");
-  const [pendingTag, setPendingTag] = useState<string | null>(null);
-  const [selectionActionError, setSelectionActionError] = useState<string | null>(null);
-  // Canonical sidebar order from props; only the current collection is
-  // hoisted to the top (stable sort keeps the rest untouched).
-  const sortedTags = useMemo(() => {
-    return [...tags].sort((a, b) => {
-      if (currentTag) {
-        const aCurrent = a.tag === currentTag;
-        const bCurrent = b.tag === currentTag;
-        if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
-      }
-      return 0;
-    });
-  }, [currentTag, tags]);
-  const lc = search.toLowerCase();
-  const everythingItem = { tag: "", title: "Everything" };
-  const channelItems = sortedTags.map((tag) => ({
-    tag: tag.tag,
-    title: collectionRefLabel(tag.tag),
-  }));
-  const filtered = lc
-    ? [everythingItem, ...channelItems].filter((item) => item.title.toLowerCase().includes(lc))
-    : [everythingItem, ...channelItems];
-  const trimmed = search.trim();
-  const canCreate = trimmed.length > 0 && filtered.length === 0;
-  const listRowCount = Math.max(filtered.length + (canCreate ? 1 : 0), 1);
-
-  const connect = async (tag: string, create: boolean) => {
-    setPendingTag(tag);
-    setSelectionActionError(null);
-    try {
-      if (create) {
-        await onCreateAndConnect(payload, tag);
-      } else {
-        await onConnect(payload, tag);
-      }
-      setSearch("");
-    } catch (error) {
-      setSelectionActionError(textSelectionErrorMessage(error));
-    } finally {
-      setPendingTag(null);
-    }
-  };
-
-  return (
-    <>
-      <SearchMenuInput
-        autoFocus
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search collections..."
-        onKeyDown={(event) => event.stopPropagation()}
-      />
-      <QuantizedMenuScrollArea
-        rowCount={listRowCount}
-        rowSize="default"
-        paddingY="compact"
-        className="min-h-0 flex-1"
-        innerClassName="px-surface py-0.5"
-      >
-        {filtered.map((item) => {
-          const pending = pendingTag === item.tag;
-          return (
-            <Item
-              key={item.tag || "__everything__"}
-              className="h-[var(--menu-row-height)] py-0"
-              disabled={pendingTag !== null}
-              staysOpen
-              onSelect={(event) => {
-                event.preventDefault();
-                void connect(item.tag, false);
-              }}
-            >
-              <span className="truncate">{pending ? "Creating..." : item.title}</span>
-            </Item>
-          );
-        })}
-
-        {canCreate && (
-          <Item
-            className="h-[var(--menu-row-height)] py-0"
-            disabled={pendingTag !== null}
-            staysOpen
-            onSelect={(event) => {
-              event.preventDefault();
-              void connect(trimmed, true);
-            }}
-          >
-            <Plus className="size-[13px] shrink-0" />
-            <span>Create &ldquo;{trimmed}&rdquo;</span>
-          </Item>
-        )}
-
-        {filtered.length === 0 && !canCreate && (
-          <p className="flex h-[var(--menu-row-height)] items-center justify-center px-2 text-center text-sm text-muted-foreground">
-            No collections
-          </p>
-        )}
-      </QuantizedMenuScrollArea>
-      {selectionActionError && <p role="alert" className="p-2 text-sm text-destructive">{selectionActionError}</p>}
-    </>
   );
 }
 
@@ -4260,12 +4037,32 @@ function TextSelectionActionBar({
   const pointerListener = (listeners as {
     onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   } | undefined)?.onPointerDown;
-  const [connectOpen, setConnectOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const updateConnectOpen = (open: boolean) => {
-    onMenuOpenChange(open);
-    setConnectOpen(open);
+  // Create Element: where the new card goes, a list under a search field,
+  // in the menu panel when the menu mode is `window`, else on the page
+  // (src/lib/openCardMenus.ts; SPEC_MENU_WINDOW.md, В3).
+  const createSpec = useMemo(() => newCardSpec(tags, currentTag ?? null), [tags, currentTag]);
+  const createMenu = useSpecMenu({
+    spec: createSpec,
+    act: (action) => createCard(action),
+    onOpenChange: onMenuOpenChange,
+  });
+  const createRef = useRef<HTMLButtonElement>(null);
+  /** The picker's choice: the card is made, then the menu and the bar go.
+   *  A card that could not be made keeps both, and the picker says why. */
+  const createCard = async (action: MenuAction): Promise<MenuAnswer> => {
+    if (!onCreateCard || action.kind !== "widget" || action.action.kind !== "create_card") return { kind: "done" };
+    const { collection, new_collection: create } = action.action;
+    try {
+      if (create && collection !== null) await onCreateChannelAndCard(state.payload, collection);
+      else await onCreateCard(state.payload, collection ?? "");
+    } catch (error) {
+      return { kind: "failed", message: textSelectionErrorMessage(error) };
+    }
+    createMenu.hide();
+    onDismiss();
+    return { kind: "done" };
   };
   const barRef = useRef<HTMLDivElement | null>(null);
   const [barSize, setBarSize] = useState({
@@ -4345,40 +4142,46 @@ function TextSelectionActionBar({
       </Button>
 
       {onCreateCard && (
-        <DropdownMenu open={connectOpen} onOpenChange={updateConnectOpen} modal={false}>
+        <DropdownMenu
+          open={createMenu.onPage}
+          onOpenChange={(next) => {
+            const button = createRef.current;
+            if (!next || button === null) {
+              createMenu.hide();
+              return;
+            }
+            // Asked for now, in the input's handler (МО19).
+            createMenu.show({
+              rect: menuPlateOf(button).getBoundingClientRect(),
+              opener: { kind: "plate" },
+              byKey: lastInputIsKey(),
+              contextMenu: false,
+            });
+          }}
+          modal={false}
+        >
           <DropdownMenuTrigger asChild>
             <Button
+              ref={createRef}
               type="button"
               variant="default"
               size="xs"
               onMouseDown={(event) => {
                 event.preventDefault();
               }}
+              // The picker is open in the panel: the button looks as it
+              // does with its picker open on the page.
+              {...(createMenu.inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
             >
               <Plus className="size-[13px]" aria-hidden="true" />
               Create Element
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            widthRole="search"
-            className={COLLECTION_PICKER_CONTENT_CLASS}
-            align="start"
+            widthRole={createSpec.role}
+            className={menuSurfaceClass(createSpec.role)}
           >
-            <TextSelectionCollectionPicker
-              payload={state.payload}
-              tags={tags}
-              currentTag={currentTag}
-              onConnect={async (payload, tag) => {
-                await onCreateCard(payload, tag);
-                updateConnectOpen(false);
-                onDismiss();
-              }}
-              onCreateAndConnect={async (payload, tag) => {
-                await onCreateChannelAndCard(payload, tag);
-                updateConnectOpen(false);
-                onDismiss();
-              }}
-            />
+            <MenuSpecView spec={createSpec} dispatch={createCard} open={createMenu.onPage} />
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -4551,24 +4354,64 @@ function DetailImage({
   // The system's published download percent. Null until macOS reports one —
   // the indicator shows a number only when there is a real number to show.
   const [percent, setPercent] = useState<number | null>(null);
+  // The index knows a card's media is in iCloud only while the card has no
+  // preview (`content_in_cloud`); a card with one may still have its original
+  // there. An original that has not arrived within the badge delay, or that
+  // would not load, is asked about once, and the system's answer decides
+  // (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
+  const [cloudFound, setCloudFound] = useState(false);
+  const inCloud = contentInCloud || cloudFound;
 
   useEffect(() => {
     setOriginalReady(false);
     setFailed(false);
     setAttempt(0);
     setPercent(null);
+    setCloudFound(false);
   }, [src]);
 
   useEffect(() => {
+    // Found by asking after the delay: the wait is already behind it.
+    if (cloudFound) {
+      setWaited(true);
+      return;
+    }
     setWaited(false);
     if (originalReady || !contentInCloud) return;
     const timer = window.setTimeout(() => setWaited(true), CLOUD_BADGE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [contentInCloud, originalReady, attempt, src]);
+  }, [contentInCloud, cloudFound, originalReady, attempt, src]);
+
+  /** Ask the system whether the original's contents are in iCloud. */
+  const askWhetherInCloud = useCallback(async (): Promise<boolean> => {
+    if (!mediaRef) return false;
+    try {
+      const { status } = await icloudDownloadProgress(mediaRef);
+      return status === "downloading" || status === "not_downloaded";
+    } catch {
+      // An unreachable probe says nothing: the original is not known to be
+      // in iCloud.
+      return false;
+    }
+  }, [mediaRef]);
+
+  useEffect(() => {
+    if (contentInCloud || cloudFound || originalReady || failed || !mediaRef) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void askWhetherInCloud().then((found) => {
+        if (!cancelled && found) setCloudFound(true);
+      });
+    }, CLOUD_BADGE_DELAY_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [askWhetherInCloud, contentInCloud, cloudFound, originalReady, failed, mediaRef, src]);
 
   const requestedSrc = withRetry(src, attempt);
-  const showDownloading = contentInCloud && !originalReady && !failed && waited;
-  const showOffline = contentInCloud && failed;
+  const showDownloading = inCloud && !originalReady && !failed && waited;
+  const showOffline = inCloud && failed;
 
   // While the waiting notice is visible, ask the system once a second what it
   // knows about the download. See SPEC_CLOUD_STORAGE.md Х4, Х9.
@@ -4632,14 +4475,30 @@ function DetailImage({
         onError={(e) => {
           // Contents held in iCloud is a state of the file, not a broken card:
           // it keeps its preview and says what happened.
-          if (contentInCloud) {
+          if (inCloud) {
             setFailed(true);
             return;
           }
-          if (!previewSrc) {
-            (e.target as HTMLImageElement).style.display = "none";
+          const image = e.currentTarget;
+          const unavailable = () => {
+            if (previewSrc) return;
+            image.style.display = "none";
             onUnavailable?.();
+          };
+          // A picture that is not a file of the space (a link's page
+          // picture) has nothing to ask about.
+          if (!mediaRef) {
+            unavailable();
+            return;
           }
+          void askWhetherInCloud().then((found) => {
+            if (!found) {
+              unavailable();
+              return;
+            }
+            setCloudFound(true);
+            setFailed(true);
+          });
         }}
         style={previewSrc && !originalReady ? { opacity: 0 } : undefined}
       />

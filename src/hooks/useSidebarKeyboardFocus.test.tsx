@@ -1,12 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { SpecPointMenu, type SpecPointMenuHandle } from "@/components/SpecPointMenu";
+import { menuItem } from "@/lib/menuSpec";
 import { setCommandOverrides } from "@/lib/commandRegistry";
 import { sidebarRowDomId } from "@/lib/sidebarSearch";
 import {
@@ -17,6 +13,33 @@ import {
 
 /// The rows as the sidebar marks them: a frame that takes the right click and a
 /// link that takes the click. Only a collection's row has a menu, as in the app.
+/** A row with the menu a right click opens on it, as the sidebar's row has:
+ *  a dropdown off the point of the click (SPEC_MENU_WINDOW.md, МО68). */
+function RowWithMenu({ rowKey, onRename, children }: { rowKey: string; onRename?: () => void; children: ReactNode }) {
+  const menu = useRef<SpecPointMenuHandle>(null);
+  return (
+    <>
+      <div
+        id={sidebarRowDomId(rowKey)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          menu.current?.open({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        {children}
+      </div>
+      <SpecPointMenu
+        handleRef={menu}
+        spec={{ role: "action", entries: [menuItem("rename", `Rename ${rowKey}`)] }}
+        act={async () => {
+          onRename?.();
+          return { kind: "done" };
+        }}
+      />
+    </>
+  );
+}
+
 function Rows({ rows, onOpen, onRename }: {
   rows: readonly string[];
   onOpen: (rowKey: string) => void;
@@ -32,16 +55,7 @@ function Rows({ rows, onOpen, onRename }: {
         );
         return rowKey === "all"
           ? <div key={rowKey} id={sidebarRowDomId(rowKey)}>{body}</div>
-          : (
-            <ContextMenu key={rowKey}>
-              <ContextMenuTrigger asChild>
-                <div id={sidebarRowDomId(rowKey)}>{body}</div>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                <ContextMenuItem onSelect={onRename}>{`Rename ${rowKey}`}</ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
-          );
+          : <RowWithMenu key={rowKey} rowKey={rowKey} onRename={onRename}>{body}</RowWithMenu>;
       })}
     </nav>
   );

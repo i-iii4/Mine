@@ -159,7 +159,7 @@ select,
    Three whole sets of motion (SPEC_MOTION_LEVELS.md, «Режимы»; user's
    decision of 13.11.2026). What answers the pointer, the keyboard's focus
    and a drag in hand moves the same in every mode: the lift, the buttons,
-   the frame and the wash, the rows, the stack, the hint, the tooltips.
+   the frame and the wash, the rows, the hint, the tooltips.
    Minimal changes no token: it replaces only the heavy motions of a press,
    the flights and the springs, and code does that (motion.ts,
    `springMotion`; cardPeek.ts). Off stands the result of a press at once:
@@ -222,6 +222,19 @@ select,
    --motion-exit back (SPEC_MOTION_LEVELS.md, С6, РД7). */
 [data-sidebar-row-text] {
   transition: color var(--motion-exit) var(--motion-ease);
+}
+
+/* The sidebar's filter under a held card answers as a row of collections
+   does: its text and its placeholder come up bright, Отклик (decision of
+   16.11.2026; SidebarSearchDropTarget.tsx). */
+[data-sidebar-search-drop] [data-sidebar-top-search],
+[data-sidebar-search-drop] [data-sidebar-top-search]::placeholder {
+  transition: color var(--motion-exit) var(--motion-ease);
+}
+[data-sidebar-search-drop][data-sidebar-search-drop-over] [data-sidebar-top-search],
+[data-sidebar-search-drop][data-sidebar-search-drop-over] [data-sidebar-top-search]::placeholder {
+  color: var(--foreground);
+  transition-duration: var(--motion-enter);
 }
 
 /* Previews' right edge (SPEC_FRONTEND.md, «Thumbnail strip»; user's decision
@@ -317,7 +330,6 @@ select,
    decision of 07.11.2026). A step starts no turn of the mark: only a change of state does. */
 [data-sidebar-scroll][data-sidebar-keyboard-walk] :is(
   [data-sidebar-row-text],
-  [data-sidebar-compact-stack],
   [data-sidebar-row-connected-pill],
   [data-sidebar-link-action],
   [data-sidebar-link-action] *
@@ -764,11 +776,11 @@ body.sidebar-resizing ::selection {
 [data-floating-menu] {
   --floating-menu-available-width: var(
     --radix-dropdown-menu-content-available-width,
-    var(--radix-context-menu-content-available-width, calc(100vw - 16px))
+    calc(100vw - 16px)
   );
   --floating-menu-available-height: var(
     --radix-dropdown-menu-content-available-height,
-    var(--radix-context-menu-content-available-height, calc(100vh - 16px))
+    calc(100vh - 16px)
   );
   width: min(var(--floating-menu-width), var(--floating-menu-available-width));
 }
@@ -1639,15 +1651,20 @@ body {
   /* The one inset of the chrome (user's decision of 07.10.2026): from a
      boundary (window edge, column line, tab line, the panel's edge) to the
      first control's plate, or to plain text where a row has no control; the
-     same 8px the card keeps round its buttons (Card actions, Connect). The
+     same 8px the card keeps round its buttons (Element actions, Connect). The
      16px it was came from the 32px chrome and is gone. Detached from the
      feed rhythm. One name, one place to change it. One exception: the
      bottom bar's left end follows --sidebar-label-inset. */
   --chrome-edge-pad: 8px;
+  /* The shell's interval outside the feed: the open card's insets and the
+     gap between its panel's boxes, the notification corner's inset, the
+     side insets of the space picker, the empty space and the missing
+     folder. Display's Spacing (`--edge-rhythm`) is the feed's alone
+     (user's decision of 15.11.2026). */
+  --shell-rhythm: var(--spacing-s3);
   /* Interior inset of the expanded card (Detail): side columns and the top
-     offset of the content. Follows the feed rhythm but never drops below
-     16px — at the tight 2px feed step the reading surface keeps its air. */
-  --card-content-pad: max(var(--edge-rhythm, 32px), 16px);
+     offset of the content. */
+  --card-content-pad: var(--shell-rhythm);
 }
 
 /* The sidebar's width (`--sidebar-width`, src/lib/sidebarWidth.ts) changes
@@ -1730,8 +1747,6 @@ body {
 :is(
   [data-slot="dropdown-menu-content"],
   [data-slot="dropdown-menu-sub-content"],
-  [data-slot="context-menu-content"],
-  [data-slot="context-menu-sub-content"],
   [data-slot="tooltip-content"]
 ) {
   --surface: var(--popover);
@@ -1864,142 +1879,62 @@ body {
   mask-image: var(--sidebar-name-mask);
 }
 
-/* Compact rows (PLAN 50.36, experiment of 22.10.2026; DESIGN_SYSTEM.md,
-   «Компактная строка боковой панели»). A list narrower than 366.2px (a panel
-   narrower than 367.2px) shows fewer than 2.8 thumbnails before the
-   previews' edge (user's decision of 22.10.2026; appLayout.ts,
-   sidebarCompactRowsBelowPx, the one place the number lives,
-   sidebarColumns.test.ts holds it). There the list is
-   shadcn/ui's Sidebar menu with its own sizes, on Mine's tokens: the group's
-   inset `p-2` (--spacing-plate), items `gap-1` apart (--spacing-surface), each
-   item a `size="lg"` menu button: 48 tall (--spacing-s6), `p-2`, `gap-2`, the
-   name and under it the count, the 7.23 stack at the right in the avatar's
-   place. No zones, guidelines or seams.
-   Connect, Connected and Disconnect stand as `SidebarMenuAction` does,
-   `right-1` (--spacing-surface), over the stack. The look is an attribute,
+/* Compact rows (PLAN 50.36; DESIGN_SYSTEM.md, «Компактная строка боковой
+   панели»). A list narrower than 366.2px (a panel narrower than 367.2px)
+   shows fewer than 2.8 thumbnails before the previews' edge (user's decision
+   of 22.10.2026; appLayout.ts, sidebarCompactRowsBelowPx, the one place the
+   number lives, sidebarColumns.test.ts holds it). There the list is the
+   List («List sidebar» below). The look is an attribute,
    `data-sidebar-look="compact"`, of the list's scrollport and of the lifted
    copy of a row (src/lib/sidebarLook.ts): the scrollport's follows its own
    width, not the panel's, so the curtain of a collapse moves the layout no
    earlier than the list narrows, and sidebarListMorph.ts keeps the table
    while the rows move to the List; the copy's follows the copy's width.
-   Under the narrow table's morph (`data-sidebar-morph`) the wide layout
-   stays. Above the threshold nothing here applies. The rules add no weight
-   to the selectors they nest (`:where`): the cascade is as it was under the
-   container query they replaced (user's decision of 01.11.2026). */
-[data-sidebar-compact-stack] {
-  display: none;
-}
-[data-sidebar-count-noun] {
-  display: none;
-}
-/* POSTPONED (user's decision of 23.10.2026; compactStack.ts,
-   COMPACT_TABLE_POSTPONED): the narrow table below, with its stack of
-   thumbnails, is out of use while the List look is developed; the List
-   rules further down take this width. */
-:where([data-sidebar-look="compact"]:not([data-sidebar-morph])) {
-  /* The narrow table (user's decisions of 23.10.2026): rows one under the
-     other as the wide table's, each closed by its line, the line 16px in
-     from the panel's edges, as the name and the stack are. The list keeps
-     its 8px above and below. */
+   Above the threshold nothing here applies.
+   The compact rows' frame, which the List's rules build on: the rows one
+   under the other with the list's 8px above and below, the name 16px from
+   the panel's edges on one row of the grid, no zones. These rules add no
+   weight to the selectors they nest (`:where`): the cascade is as it was
+   under the container query they replaced (user's decision of 01.11.2026). */
+:where([data-sidebar-look="compact"]) {
   & [data-sidebar-rows] {
     display: flex;
     flex-direction: column;
     padding-block: var(--spacing-plate);
   }
-  & [data-sidebar-row-surface]::after {
-    inset-inline: var(--spacing-s3);
-  }
-  & [data-sidebar-guidelines],
-  & [data-sidebar-editable-row-guideline],
-  & [data-sidebar-preview-rail] {
+  & [data-sidebar-editable-row-guideline] {
     display: none;
   }
-  /* Insets of an item: the button's padding is its rows' inset, the meta
-     zone's lead is gone, actions stand at `right-1`. */
+  /* Insets of a row: the meta zone's lead is gone. */
   & [data-sidebar-row],
   & [data-sidebar-tag-drag-preview] {
     --sidebar-row-pad-x: var(--spacing-plate);
     --sidebar-meta-lead: 0px;
     --sidebar-action-inset: var(--spacing-surface);
   }
-  /* A row of the wide table's step (`--sidebar-row-height`, its line
-     included): the name on one line, centred in its cell, beside the stack;
-     no count. The name and the stack keep the wide rows' 16px from the
-     panel's edges. */
+  /* The name keeps the wide rows' 16px from the panel's edges. */
   & [data-sidebar-row-body] {
     --sidebar-row-pad-x: 0px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto;
-    column-gap: var(--spacing-plate);
     align-content: center;
-    min-height: var(--sidebar-row-height);
-    padding: 0 var(--spacing-s3) 1px;
+    padding-inline: var(--spacing-s3);
   }
   /* The lifted copy draws its own 1px frame: the same text inside it. */
   & [data-sidebar-tag-drag-preview] > [data-sidebar-row-body] {
-    min-height: 0;
-    padding-block: 0;
     padding-inline: calc(var(--spacing-plate) - 1px);
   }
-  /* The name, muted as a wide row's until the pointer, the
-     keyboard or the open collection lights it. It dissolves at its end by the wide
-     rows' rule (--sidebar-name-mask: the same fade and clear tail), before
-     the stack, or before Connect while it is there (user's decision of
-     22.10.2026; no ellipsis). The optical pixel stays in its padding, so
-     names keep their 17px. */
+  /* The optical pixel stays in the name's padding, so names keep their
+     17px. */
   & [data-sidebar-name-cell] {
-    grid-column: 1;
     grid-row: 1;
     align-self: center;
-    width: auto;
     min-width: 0;
     line-height: var(--text-sm--line-height);
   }
-  /* No count in the narrow table (user's decision of 23.10.2026). */
-  & [data-sidebar-meta-count] {
-    display: none;
-  }
-  /* The stack in the avatar's place, centred in the row. */
-  & [data-sidebar-meta-cell] {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    width: auto;
-  }
-  & [data-sidebar-compact-stack] {
-    display: block;
-  }
-  & [data-sidebar-count-noun] {
-    display: inline;
-  }
-  /* While Connect, Disconnect or Connected is there, the lines end
-     `gap-2` before it (shadcn's `pr-8` beside a SidebarMenuAction): the
-     column under the action is the action's width less the inset it gains
-     by standing at `right-1` instead of on the padding. */
-  & [data-sidebar-row]:has(> [data-sidebar-link-action]) [data-sidebar-meta-cell],
-  & [data-sidebar-row]:has(> [data-sidebar-row-connected-pill][data-state="on"]) [data-sidebar-meta-cell] {
-    min-width: calc(var(--sidebar-zone) - 2 * var(--spacing-plate) - var(--spacing-plate) + var(--spacing-surface));
-  }
-  /* The pointer's, the keyboard's and the open collection's item answer as
-     a wide row does (user's decisions of 22.10.2026): the name, muted at
-     rest, lights up (С7.10, the rules above), with no plate. The weight
-     never changes. */
 }
-/* The deck opens for the item under the pointer at once, with no speed
-   gate (user's decision of 22.10.2026), and for the keyboard's item at once
-   (`data-sidebar-row-answer`, Sidebar.tsx, SidebarAnswerRowContext). It
-   moves on one critically damped spring both ways (src/lib/channelIcon.ts:
-   `--channel-icon-easing`, a `linear()` computed from the spring's equation,
-   and `--channel-icon-duration`, its settling time); a transition retargets
-   from the current place, so an interrupted move goes on from where it is.
-   The bottom card stays; the cards above it slide toward the name. Only the
-   place moves; sizes and shadows stay, nothing turns. With "Reduce motion"
-   the cards stay at rest. */
-/* Thumbnail edge. Every sidebar thumbnail, a stack's mini-card and a
-   strip's tile alike, has the buttons' edge (user's decisions of 22.10.2026;
+
+/* Thumbnail edge. Every sidebar thumbnail, a strip's tile, has the
+   buttons' edge (user's decisions of 22.10.2026;
    SPEC_COLOR_RULES.md, К10; buttons.css, «Buttons: macOS»; the graph's cards
    paint the same, graph/canvas.ts): a 0.5px stroke inside the box, a step
    and a half of the quiet line brighter than the thumbnail's face (its own
@@ -2022,74 +1957,6 @@ body {
   box-shadow: inset 0 0 0 0.5px oklch(from color-mix(in srgb, var(--accent), var(--foreground) var(--active-alpha)) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
 }
 
-/* TRIAL (PLAN 50.38): the Ring edge. No shadow; outside the buttons' edge a
-   1px ring of the item's fill (`--surface`: the panel's, or the plate's under
-   the pointer, the keyboard and the open collection), so a card above cuts
-   its outline out of the one below. */
-:root[data-sidebar-stack-ring] [data-channel-icon-card] {
-  box-shadow: 0 0 0 1px var(--surface);
-}
-/* The stack is a member of Пружина (SPEC_MOTION_LEVELS.md, С5, РД4). It
-   answers the pointer, so its spring stands on the stack's box in every mode
-   (channelIcon.ts; «Режимы»). */
-[data-channel-icon-card] {
-  transform: var(--channel-icon-rest);
-  transition: transform var(--channel-icon-duration, var(--motion-move)) var(--channel-icon-easing, var(--motion-move-ease));
-}
-[data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
-  transform: var(--channel-icon-hover);
-}
-
-/* Rows morph (src/lib/sidebarRowsMorph.ts, user's decisions of 23.10.2026):
-   across the compact threshold the rows' lines shorten to the narrow
-   table's insets, the column lines and the count fade, and the strip's
-   thumbnails flatten into the stack, on the stack's spring. While they move
-   the list keeps the wide layout: the compact rows do not apply under the
-   morph's mark. The strip, moved toward the stack, carries its clipping
-   edge with it; past the panel's edge it is cut, not scrolled to. Its first
-   three thumbnails lie as the stack's cards do, the collection's first on
-   top, and bring the cards' edge: Shadow (`shadow-sm`) or the Ring of the
-   trial, faded in by the morph. The stack, hidden, loads its pictures for
-   the swap. With "Reduce motion" none of this runs: the layout switches at
-   once. */
-[data-sidebar-scroll][data-sidebar-morph] {
-  overflow-x: hidden;
-}
-[data-sidebar-scroll][data-sidebar-morph] [data-sidebar-compact-stack] {
-  display: block;
-  position: absolute;
-  visibility: hidden;
-}
-[data-sidebar-scroll][data-sidebar-morph] [data-sidebar-strip-track] > * {
-  overflow: visible;
-}
-[data-sidebar-scroll][data-sidebar-morph] [data-sidebar-strip-track] > :nth-child(1) {
-  z-index: 3;
-}
-[data-sidebar-scroll][data-sidebar-morph] [data-sidebar-strip-track] > :nth-child(2) {
-  z-index: 2;
-}
-[data-sidebar-scroll][data-sidebar-morph] [data-sidebar-strip-track] > :nth-child(3) {
-  z-index: 1;
-}
-[data-sidebar-scroll][data-sidebar-morph] [data-sidebar-strip-track] > ::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  box-shadow: var(--shadow-sm);
-  opacity: 0;
-  pointer-events: none;
-}
-:root[data-sidebar-stack-ring] [data-sidebar-scroll][data-sidebar-morph] [data-sidebar-strip-track] > ::before {
-  box-shadow: 0 0 0 1px var(--surface);
-}
-/* The moment the layouts are read: the strip and its thumbnails stand where
-   the layout puts them (an important declaration outranks an animation). */
-[data-sidebar-scroll][data-sidebar-morph-measure] :is([data-sidebar-thumbnail-strip], [data-sidebar-strip-track] > *) {
-  transform: none !important;
-}
-
 @keyframes sidebar-link-icon-to-cross {
   from { rotate: 0deg; }
   to { rotate: 45deg; }
@@ -2098,10 +1965,10 @@ body {
   from { rotate: 45deg; }
   to { rotate: 0deg; }
 }
-/* The mark turns on a press: on the stack's spring in Full, by the calm move
-   that stands in for a spring in Minimal (Sidebar.tsx, channelIconSpringStyle);
-   Off does not turn it (SPEC_MOTION_LEVELS.md, С7, РД4). No code waits for the
-   turn's end. */
+/* The mark turns on a press: on the spring in Full, by the calm move that
+   stands in for a spring in Minimal (Sidebar.tsx, `springStyle` of
+   src/lib/spring.ts); Off does not turn it (SPEC_MOTION_LEVELS.md, С7, РД4).
+   No code waits for the turn's end. */
 [data-motion="off"] [data-sidebar-link-icon] {
   animation: none !important;
 }
@@ -2111,41 +1978,40 @@ body {
 }
 
 /* List sidebar (PLAN 50.38, user's request of 23.10.2026, after a reference
-   list): in place of the compact rows, below the same width (a wider sidebar
-   stays the table), the collections' names with no previews, stack,
-   guidelines, lines or plates; muted at rest and lit under the pointer and
-   the keyboard as a table row's (С7.10). Rows step 24px, and the List reads
-   as a table of contents (below); both fixed by the user's decision of
-   15.11.2026. The panel keeps its divider. */
-:where([data-sidebar-look="compact"]:not([data-sidebar-morph])) {
-  :root[data-sidebar-list] & :is(
+   list): the compact rows (a wider sidebar stays the table) are the
+   collections' names with no previews, guidelines, lines or plates; muted at
+   rest and lit under the pointer and the keyboard as a table row's (С7.10).
+   Rows step 24px, and the List reads as a table of contents (below); both
+   fixed by the user's decision of 15.11.2026. The panel keeps its divider.
+   The List is the one compact look (the narrow table with its stack of
+   thumbnails was removed by the user's decision of 15.11.2026). Its rules
+   keep the weight they had while it was a choice marked on the root, two
+   attributes before the nested selector, so the cascade is as it was: the
+   look's holder, the list's scrollport or the lifted copy of a row, and the
+   look. */
+:is([data-sidebar-scroll], [data-sidebar-drag-row])[data-sidebar-look="compact"] {
+  & :is(
     [data-sidebar-preview-rail],
     [data-sidebar-meta-cell],
-    [data-sidebar-compact-stack],
     [data-sidebar-guidelines]
   ) {
     display: none !important;
   }
-  :root[data-sidebar-list] & [data-sidebar-row-surface]::after {
+  & [data-sidebar-row-surface]::after {
     display: none;
   }
-  :root[data-sidebar-list] & [data-sidebar-rows] {
+  & [data-sidebar-rows] {
     --sidebar-row-height: var(--spacing-s4);
     gap: 0;
   }
-  :root[data-sidebar-list] & [data-sidebar-row-body] {
+  & [data-sidebar-row-body] {
     display: flex;
     min-height: var(--spacing-s4);
     padding-block: 0;
   }
-  :root[data-sidebar-list] & [data-sidebar-name-cell] {
+  & [data-sidebar-name-cell] {
     flex: 1 1 auto;
     width: auto;
-  }
-  /* The label that founds a collection starts where a name starts. */
-  :root[data-sidebar-list] & [data-sidebar-create-channel-row-body] {
-    padding-left: var(--spacing-s3);
-    padding-bottom: 0;
   }
   /* The List reads as a book's table of contents (List style Contents, fixed
      by the user's decision of 15.11.2026; the user's reference and decisions
@@ -2160,7 +2026,7 @@ body {
      the dots of every row stand in columns and only whole dots show; the
      name's text and the count cover them with the panel's fill. The leader
      is not read aloud. */
-  :root[data-sidebar-list] & [data-sidebar-row-body] {
+  & [data-sidebar-row-body] {
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -2173,14 +2039,14 @@ body {
     padding-block: var(--toc-row-pad);
   }
   /* The leader (drawn in «List and table» below). */
-  :root[data-sidebar-list] & [data-sidebar-row-body] {
+  & [data-sidebar-row-body] {
     --sidebar-toc-leader: block;
   }
   /* The numbers' column is never narrower than the longest word that takes
      their place (Disconnect), so a long name never runs under Connect,
      Disconnect or Connected; the leader runs on through the empty room up
      to the number. */
-  :root[data-sidebar-list] & [data-sidebar-row-body]::after {
+  & [data-sidebar-row-body]::after {
     content: "Disconnect" / "";
     grid-column: 2;
     grid-row: 1;
@@ -2191,7 +2057,7 @@ body {
     font-size: var(--text-interface);
     white-space: nowrap;
   }
-  :root[data-sidebar-list] & [data-sidebar-name-cell] {
+  & [data-sidebar-name-cell] {
     grid-column: 1;
     overflow: clip;
     white-space: normal;
@@ -2199,7 +2065,7 @@ body {
     -webkit-mask-image: none;
     mask-image: none;
   }
-  :root[data-sidebar-list] & [data-sidebar-name-text] {
+  & [data-sidebar-name-text] {
     position: relative;
     padding-right: var(--spacing-surface);
     background-color: var(--surface);
@@ -2208,30 +2074,30 @@ body {
      the name in its lines and of the count beside it keeps the row's height;
      the field lies over the first line, and ends clear of the submit button,
      which stands over the count's column. No leader runs under it. */
-  :root[data-sidebar-list] & [data-sidebar-row-editing] [data-sidebar-name-cell] {
+  & [data-sidebar-row-editing] [data-sidebar-name-cell] {
     display: grid;
   }
-  :root[data-sidebar-list] & [data-sidebar-row-editing] [data-sidebar-name-cell] > * {
+  & [data-sidebar-row-editing] [data-sidebar-name-cell] > * {
     grid-area: 1 / 1;
     min-width: 0;
   }
-  :root[data-sidebar-list] & [data-sidebar-name-cell] > [data-sidebar-editable-row-ghost] {
+  & [data-sidebar-name-cell] > [data-sidebar-editable-row-ghost] {
     display: block;
   }
-  :root[data-sidebar-list] & [data-sidebar-inline-channel-editor-row] {
+  & [data-sidebar-inline-channel-editor-row] {
     align-self: start;
     padding-right: var(--spacing-plate) !important;
   }
-  :root[data-sidebar-list] & [data-sidebar-row-editing] [data-sidebar-row-body] {
+  & [data-sidebar-row-editing] [data-sidebar-row-body] {
     --sidebar-toc-leader: none;
   }
-  :root[data-sidebar-list] & [data-sidebar-inline-submit-action] {
+  & [data-sidebar-inline-submit-action] {
     top: calc(var(--toc-row-pad) + var(--text-sm--line-height) / 2);
   }
   /* The number in the name's own size, as a book sets its page numbers in
      the entries' type, in figures of one width, so the column of numbers
      stands straight. */
-  :root[data-sidebar-list] & [data-sidebar-meta-count] {
+  & [data-sidebar-meta-count] {
     position: relative;
     display: block;
     grid-column: 2;
@@ -2249,12 +2115,12 @@ body {
   /* The count stays quiet under the pointer, where the name lights
      (`[data-sidebar-row-focused]` above): the row's body in the selector
      makes this rule as specific as that one, and it comes later. */
-  :root[data-sidebar-list] & [data-sidebar-row] [data-sidebar-row-body] [data-sidebar-meta-count][data-sidebar-row-text] {
+  & [data-sidebar-row] [data-sidebar-row-body] [data-sidebar-meta-count][data-sidebar-row-text] {
     color: var(--tertiary-foreground);
   }
   /* The row's own measures, shared by its body and by Connect and
      Connected beside it. */
-  :root[data-sidebar-list] & [data-sidebar-row] {
+  & [data-sidebar-row] {
     --toc-row-pad: calc((var(--sidebar-row-height) - var(--text-sm--line-height)) / 2);
     --sidebar-action-inset: var(--spacing-s3);
   }
@@ -2268,7 +2134,7 @@ body {
      right edge (user's decision of 24.10.2026): a pointer coming from the
      side or from above lights the row and the word in the same move. The
      word keeps its place on the last line; only that line is filled. */
-  :root[data-sidebar-list] & :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]) {
+  & :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]) {
     top: 0;
     bottom: 0;
     right: 0 !important;
@@ -2293,16 +2159,16 @@ body {
      only reports (Everything's) on the numbers' tertiary step; Connect and
      Connected of a collection one step up, muted; bright only under the
      pointer. Disconnect keeps its own colour. */
-  :root[data-sidebar-list] & [data-sidebar-row-connected-pill] {
+  & [data-sidebar-row-connected-pill] {
     color: var(--tertiary-foreground);
   }
-  :root[data-sidebar-list] & [data-sidebar-link-action] {
+  & [data-sidebar-link-action] {
     color: var(--muted-foreground);
   }
   /* A collection's Connected stands as bright as the name beside it (user's
      decision of 24.10.2026). */
-  :root[data-sidebar-list] & [data-sidebar-link-action][data-link-checked],
-  :root[data-sidebar-list] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) {
+  & [data-sidebar-link-action][data-link-checked],
+  & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) {
     color: var(--foreground);
   }
   /* Under the pointer the word steps left and a mark comes in at its right
@@ -2310,7 +2176,7 @@ body {
      connected, the same plus turned a quarter of its way, a cross, where it
      can be disconnected; the mark turns as the state changes. The size of
      the type, 4px from the word; the hover answers' timing. */
-  :root[data-sidebar-list] & [data-sidebar-link-label] {
+  & [data-sidebar-link-label] {
     position: relative;
     padding-left: var(--spacing-surface);
     background-color: var(--sidebar-word-ground, var(--sidebar));
@@ -2320,7 +2186,7 @@ body {
      the leader under it fade into the word over the edge fade's width
      (user's decision of 28.10.2026; Sidebar.tsx, nameRunsUnderLinkWord). A
      name that ends before the word keeps the leader as it is. */
-  :root[data-sidebar-list] & [data-sidebar-link-label]::before {
+  & [data-sidebar-link-label]::before {
     content: "";
     position: absolute;
     top: 0;
@@ -2334,7 +2200,7 @@ body {
     /* Goes and comes with the word's step, on its timing. */
     transition: opacity var(--motion-exit) var(--motion-ease);
   }
-  :root[data-sidebar-list] & [data-sidebar-link-action][data-sidebar-link-over-name]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label]::before {
+  & [data-sidebar-link-action][data-sidebar-link-over-name]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label]::before {
     opacity: 1;
     transition-duration: var(--motion-enter);
   }
@@ -2345,10 +2211,10 @@ body {
      С7.10). Its press, its pointer mark and the collection's window over the
      name share this one edge: Sidebar.tsx reads the reach from this box
      (`linkActionReach`). The name's part of the row ends there. */
-  :root[data-sidebar-list] & [data-sidebar-link-action] {
+  & [data-sidebar-link-action] {
     --sidebar-link-reach: calc(var(--text-interface) + var(--spacing-surface));
   }
-  :root[data-sidebar-list] & [data-sidebar-link-action]::after {
+  & [data-sidebar-link-action]::after {
     content: "";
     position: absolute;
     top: 0;
@@ -2356,11 +2222,11 @@ body {
     right: 100%;
     width: var(--sidebar-link-reach);
   }
-  :root[data-sidebar-list] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label] {
+  & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label] {
     translate: calc(-1 * var(--sidebar-link-reach)) 0;
     transition-duration: var(--motion-enter);
   }
-  :root[data-sidebar-list] & [data-sidebar-link-icon] {
+  & [data-sidebar-link-icon] {
     display: block;
     position: absolute;
     right: var(--sidebar-action-inset);
@@ -2370,34 +2236,29 @@ body {
     opacity: 0;
     transition: opacity var(--motion-exit) var(--motion-ease);
     /* The plus turns into the cross and back whenever the state changes,
-       even if the row is drawn anew for it, on the stack's spring
-       (Sidebar.tsx, channelIconSpringStyle). */
-    animation: sidebar-link-icon-to-plus var(--channel-icon-duration, var(--motion-move)) var(--channel-icon-easing, var(--motion-move-ease));
+       even if the row is drawn anew for it, on the spring (Sidebar.tsx,
+       `springStyle`). */
+    animation: sidebar-link-icon-to-plus var(--spring-duration, var(--motion-move)) var(--spring-easing, var(--motion-move-ease));
   }
-  :root[data-sidebar-list] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-icon] {
+  & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-icon] {
     opacity: 1;
     transition-duration: var(--motion-enter);
   }
   /* A pointer that lands right on the word, its row not yet lit: the word
      comes in already stepped left with its mark, in the button's own fade,
      one step instead of two (user's decision of 24.10.2026). */
-  :root[data-sidebar-list] & [data-sidebar-link-action][data-sidebar-link-pointer="instant"] :is([data-sidebar-link-label], [data-sidebar-link-icon]) {
+  & [data-sidebar-link-action][data-sidebar-link-pointer="instant"] :is([data-sidebar-link-label], [data-sidebar-link-icon]) {
     transition: none;
   }
   /* The cross takes the word's colour: Disconnect's, which stands beside it
      whenever the cross shows. */
-  :root[data-sidebar-list] & [data-sidebar-link-action][data-link-checked] [data-sidebar-link-icon] {
+  & [data-sidebar-link-action][data-link-checked] [data-sidebar-link-icon] {
     rotate: 45deg;
     color: var(--color-detach, var(--detach));
     animation-name: sidebar-link-icon-to-cross;
   }
-  :root[data-sidebar-list] & :is([data-sidebar-link-label], [data-sidebar-row-connected-pill]) > span {
+  & :is([data-sidebar-link-label], [data-sidebar-row-connected-pill]) > span {
     place-items: center end;
-  }
-  /* The number alone, as a book's page number (user's decision of
-     23.10.2026). */
-  :root[data-sidebar-list] & [data-sidebar-count-noun] {
-    display: none;
   }
 }
 
@@ -2423,7 +2284,7 @@ body {
    (`data-sidebar-list-marks`), where the move fades them. */
 /* The List's leader, set as the List rules above tell; while the rows move,
    on the row's own List marks (below). */
-:root[data-sidebar-list] :is([data-sidebar-row-body], [data-sidebar-list-mark="leader"])::before {
+:is([data-sidebar-row-body], [data-sidebar-list-mark="leader"])::before {
   content: ". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . ." / "";
   display: var(--sidebar-toc-leader, none);
   position: absolute;
@@ -2449,7 +2310,7 @@ body {
 [data-sidebar-list-mark] {
   display: none;
 }
-:root[data-sidebar-list] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] > [data-sidebar-list-mark] {
+[data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] > [data-sidebar-list-mark] {
   --sidebar-toc-leader: block;
   --toc-row-pad: calc((var(--sidebar-row-height) + 1px - var(--text-sm--line-height)) / 2);
   display: block;
@@ -2457,10 +2318,10 @@ body {
   inset: 0;
   pointer-events: none;
 }
-:root[data-sidebar-list] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body]::before {
+[data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body]::before {
   display: none;
 }
-:root[data-sidebar-list] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-name-text] {
+[data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-name-text] {
   position: relative;
   background-color: var(--surface);
   box-shadow: var(--spacing-surface) 0 0 var(--surface);
@@ -2470,7 +2331,7 @@ body {
    List (sidebarListMorph.ts measures it), in
    its own type, the name's size in figures of one width, on the tertiary
    step, covering the leader. The table's count is the count itself. */
-:root[data-sidebar-list] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] > [data-sidebar-list-mark="count"][data-sidebar-list-count]::after {
+[data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] > [data-sidebar-list-mark="count"][data-sidebar-list-count]::after {
   content: attr(data-sidebar-count);
   position: absolute;
   top: var(--sidebar-list-count-top);
@@ -2486,7 +2347,7 @@ body {
   pointer-events: none;
 }
 /* The leader stands on the line of the List's count: the name's last line. */
-:root[data-sidebar-list] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] > [data-sidebar-list-mark="leader"][data-sidebar-list-count]::before {
+[data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] > [data-sidebar-list-mark="leader"][data-sidebar-list-count]::before {
   top: var(--sidebar-list-count-top);
   bottom: auto;
 }
@@ -2536,7 +2397,7 @@ body {
    line back). The first line's end slides as a cut name's does, and the
    lines after it show over the second half of the way, so the frame that
    lands changes nothing in the name (user's decision of 05.11.2026). */
-:root[data-sidebar-list] [data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] {
+[data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] {
   height: var(--sidebar-name-list-h);
   margin-bottom: calc(var(--text-sm--line-height) - var(--sidebar-name-list-h));
   line-height: var(--text-sm--line-height);
@@ -2549,7 +2410,7 @@ body {
   -webkit-mask-size: calc(var(--sidebar-name-edge-table) + var(--sidebar-name-q) * (var(--sidebar-name-edge-list) - var(--sidebar-name-edge-table))) var(--text-sm--line-height), 100% calc(100% - var(--text-sm--line-height));
   mask-size: calc(var(--sidebar-name-edge-table) + var(--sidebar-name-q) * (var(--sidebar-name-edge-list) - var(--sidebar-name-edge-table))) var(--text-sm--line-height), 100% calc(100% - var(--text-sm--line-height));
 }
-:root[data-sidebar-list] [data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] [data-sidebar-name-text] {
+[data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] [data-sidebar-name-text] {
   padding-right: var(--spacing-surface);
 }
 /* Going back to the List, once the table's own parts are gone
@@ -2569,7 +2430,7 @@ body {
    show are out of the scrollport the whole move, and their parts too. */
 [data-sidebar-scroll][data-sidebar-rows-fade="table"] [data-sidebar-row-surface]::after,
 [data-sidebar-scroll][data-sidebar-rows-fade="table"] :is([data-sidebar-guidelines], [data-sidebar-preview-rail], [data-sidebar-editable-row-guideline], [data-sidebar-meta-count]),
-:root[data-sidebar-list] [data-sidebar-scroll][data-sidebar-rows-fade="table"] [data-sidebar-row-surface] > :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]),
+[data-sidebar-scroll][data-sidebar-rows-fade="table"] [data-sidebar-row-surface] > :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]),
 [data-sidebar-scroll][data-sidebar-rows-fade="list"] [data-sidebar-name-cell]::after,
 [data-sidebar-scroll][data-sidebar-rows-fade="list"] [data-sidebar-list-mark] {
   opacity: 0;
@@ -2710,8 +2571,6 @@ body {
 header.chrome-row .text-sm,
 [data-slot="dropdown-menu-content"] .text-base,
 [data-slot="dropdown-menu-sub-content"] .text-base,
-[data-slot="context-menu-content"] .text-base,
-[data-slot="context-menu-sub-content"] .text-base,
 [data-sidebar-scroll] .text-base {
   font-size: var(--text-interface);
 }

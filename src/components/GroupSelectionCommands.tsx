@@ -5,58 +5,35 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  BatchCollectionPicker,
-  COLLECTION_PICKER_CONTENT_CLASS,
-  type MembershipAnswer,
-} from "./CollectionPicker";
+import { useRef } from "react";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import { ChromeActions } from "./ChromeRow";
+import { MenuSpecView, menuSurfaceClass } from "./MenuSpecView";
 import { commandById } from "@/lib/commandRegistry";
-import type { LightBlock, TagCount } from "@/types";
+import { menuPlateOf } from "@/lib/floatingLayer";
+import { lastInputIsKey } from "@/lib/motionInput";
 import { selectedElementCountLabel } from "@/lib/groupSelection";
-import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
+import { useGroupSelectionMenu, type GroupSelectionMenuInput } from "@/hooks/useGroupSelectionMenu";
+import { useSpecMenu } from "@/hooks/useSpecMenu";
 
-interface GroupSelectionCommandsProps {
-  selectedBlocks: LightBlock[];
-  tags: TagCount[];
-  currentTag?: string;
-  onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
-  /** The feed's `requestDeleteSelection()`: the window is the feed's, not
-   *  the row's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
-  onRequestDeleteSelection: () => void;
-  onMergeSelectedBlocks: () => void;
-  onClearSelection: () => void;
-}
+/** The feed's `requestDeleteSelection()` is the window's owner, not the
+ *  row's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
+type GroupSelectionCommandsProps = GroupSelectionMenuInput;
 
-export function GroupSelectionCommands({
-  selectedBlocks,
-  tags,
-  currentTag,
-  onLoadBlockTags,
-  onBatchSetTag,
-  onCreateAndAssignBatch,
-  onRequestDeleteSelection,
-  onMergeSelectedBlocks,
-  onClearSelection,
-}: GroupSelectionCommandsProps) {
-  const actions = useGroupSelectionMenuActions({
-    selectedBlocks,
-    currentTag,
-    onLoadBlockTags,
-    onBatchSetTag,
-    onCreateAndAssignBatch,
-  });
+export function GroupSelectionCommands(props: GroupSelectionCommandsProps) {
+  const { selectedBlocks, currentTag, onRequestDeleteSelection, onMergeSelectedBlocks, onClearSelection } = props;
+  // Connect's picker: the selection's collections as a list under a search
+  // field, in the menu panel when the menu mode is `window`, else on the
+  // page (src/lib/groupSelectionMenu.ts; SPEC_MENU_WINDOW.md, Б3).
+  const menu = useGroupSelectionMenu("connect", props);
+  const connect = useSpecMenu({ spec: menu.spec, act: menu.act, onOpenChange: menu.setOpen });
+  const connectRef = useRef<HTMLButtonElement>(null);
 
-  // The selection stays until the answer: a Disconnect that was not made
-  // keeps it, to be tried again, and the tab's notice says why
-  // (SPEC_DEEP_AUDIT.md, Е6.1).
+  // The row's Disconnect is the menu's own command: the selection stays
+  // until the answer, and a Disconnect that was not made keeps it, to be
+  // tried again, while the tab's notice says why (SPEC_DEEP_AUDIT.md, Е6.1).
   const handleRemoveFromCollection = () => {
-    void actions.disconnectFromCurrentCollection().then((applied) => {
-      if (applied) onClearSelection();
-    });
+    void menu.act({ kind: "run", id: "disconnect" });
   };
 
   if (selectedBlocks.length === 0) return null;
@@ -89,26 +66,41 @@ export function GroupSelectionCommands({
           </div>
 
           <ChromeActions data-feed-selection-actions="">
-            <DropdownMenu open={actions.connectOpen} onOpenChange={actions.setConnectOpen} modal={false}>
+            <DropdownMenu
+              open={connect.onPage}
+              onOpenChange={(next) => {
+                const button = connectRef.current;
+                if (!next || button === null) {
+                  connect.hide();
+                  return;
+                }
+                // Asked for now, in the input's handler (МО19).
+                connect.show({
+                  rect: menuPlateOf(button).getBoundingClientRect(),
+                  opener: { kind: "plate" },
+                  byKey: lastInputIsKey(),
+                  contextMenu: false,
+                });
+              }}
+              modal={false}
+            >
               <DropdownMenuTrigger asChild>
                 <Button
+                  ref={connectRef}
                   type="button"
                   variant="default"
                   size="xs"
                   className="shrink-0"
+                  // The picker is open in the panel: the button looks as it
+                  // does with its picker open on the page.
+                  {...(connect.inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
                 >
                   <Plus className="size-[13px]" />
                   Connect
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">
-                <BatchCollectionPicker
-                  selectedSlugs={actions.selectedSlugs}
-                  tags={tags}
-                  tagLookup={actions.tagLookup}
-                  onBatchSetTag={actions.batchSetTag}
-                  onCreateAndAssign={actions.createAndAssignBatch}
-                />
+              <DropdownMenuContent widthRole={menu.spec.role} className={menuSurfaceClass(menu.spec.role)}>
+                <MenuSpecView spec={menu.spec} dispatch={menu.act} open={connect.onPage} />
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -154,9 +146,9 @@ export function GroupSelectionCommands({
           </ChromeActions>
         </div>
       </div>
-      {actions.actionError && (
+      {menu.error && (
         <p className="absolute left-1/2 top-full z-40 mt-2 -translate-x-1/2 rounded-1 border border-destructive bg-background px-3 py-1 text-sm text-destructive">
-          {actions.actionError}
+          {menu.error}
         </p>
       )}
     </div>

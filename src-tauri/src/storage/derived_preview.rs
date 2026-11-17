@@ -16,7 +16,7 @@ use crate::domain::block::{parse_markdown_document, Block, BlockType, CardKind, 
 use crate::domain::vault::VaultLayout;
 use crate::storage::index::{self, FeedPreviewKind, FeedPreviewManifest};
 use crate::storage::preview_plan::{
-    is_image_media, is_video_media, resolve_upgrade_media_with, PreviewMediaKind,
+    self, is_image_media, is_video_media, resolve_upgrade_media_with, PreviewMediaKind,
 };
 use crate::storage::thumbnails::PreviewReadiness;
 use crate::storage::{files, media_dimensions, media_refs, thumbnails};
@@ -629,9 +629,14 @@ fn reconcile_slug(
     }
 
     if cloud == CloudSources::Defer {
-        if let Some(reference) =
+        if let Some((reference, path)) =
             source_waiting_for_cloud(resolver, slug, &block, &manifest, source_changed, epoch)?
         {
+            // Asked for at once, side by side with every other card of the
+            // pass, so the fetching pass that follows waits less, and so the
+            // file comes down even when a read here may not bring it
+            // (SPEC_CLOUD_STORAGE.md, Х24, «Отказ чтения»).
+            crate::storage::icloud_downloads::request_downloads([path.as_path()]);
             record_cloud_wait(vault, slug);
             return mark_non_ready(
                 conn,
@@ -681,7 +686,7 @@ fn reconcile_slug(
                         PreviewErrorKind::MissingSource,
                         format!("media file is missing from the vault: {reference}"),
                     ),
-                    PrimarySourceState::InCloud(reference) => {
+                    PrimarySourceState::InCloud(reference, _) => {
                         record_cloud_wait(vault, slug);
                         (
                             PreviewErrorKind::ContentInCloud,
@@ -768,6 +773,11 @@ fn reconcile_slug(
             )
         } else if is_image_media(&tile.source_path) && thumbnails::is_rust_decodable(&source) {
             thumbnails::generate_thumbnail(&source, &destination, thumbnails::DEFAULT_MAX_SIZE)
+        } else if crate::storage::cloud_files::is_content_offloaded(&source) {
+            // Its head could not be read: the contents are in iCloud, and
+            // what format they are says nothing yet.
+            generation_failure.get_or_insert(tile_in_cloud(vault, slug, &tile.source_path));
+            continue;
         } else {
             generation_failure.get_or_insert((
                 PreviewErrorKind::BrowserDecodeRequired,
@@ -780,6 +790,9 @@ fn reconcile_slug(
         };
         match generated {
             Ok(_) => regenerated = true,
+            Err(_) if crate::storage::cloud_files::is_content_offloaded(&source) => {
+                generation_failure.get_or_insert(tile_in_cloud(vault, slug, &tile.source_path));
+            }
             Err(error) => {
                 generation_failure.get_or_insert((
                     PreviewErrorKind::Generation,
@@ -821,6 +834,19 @@ fn reconcile_slug(
         outcome.regenerated = regenerated;
         Some(outcome)
     })
+}
+
+/// The failure of a tile whose source a fetching pass could not read because
+/// its contents are still in iCloud: iCloud refused the read (`EDEADLK`) or
+/// has not delivered the file. The card waits as `content_in_cloud`, with the
+/// wait counted (Х16), not as a file that cannot be decoded
+/// (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
+fn tile_in_cloud(vault: &VaultLayout, slug: &str, source: &str) -> (PreviewErrorKind, String) {
+    record_cloud_wait(vault, slug);
+    (
+        PreviewErrorKind::ContentInCloud,
+        format!("media contents are in iCloud: {source}"),
+    )
 }
 
 /// Whether the feed draws this row's preview: the same rule as
@@ -1153,15 +1179,15 @@ fn source_waiting_for_cloud(
     manifest: &FeedPreviewManifest,
     source_changed: bool,
     epoch: thumbnails::GeneratorEpoch,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, PathBuf)>> {
     let needs = |resolver: &mut media_refs::MediaResolver<'_>, relative: &str| -> Result<bool> {
         let path = preview_disk_path(resolver.vault(), relative)?;
         Ok(source_changed || !thumbnails::is_finished_picture(&path, epoch))
     };
     if let Some(primary) = manifest.primary_preview_path.as_deref() {
         if needs(resolver, primary)? {
-            if let PrimarySourceState::InCloud(reference) = primary_source_state(resolver, block) {
-                return Ok(Some(reference));
+            if let PrimarySourceState::InCloud(reference, path) = primary_source_state(resolver, block) {
+                return Ok(Some((reference, path)));
             }
         }
     }
@@ -1174,7 +1200,7 @@ fn source_waiting_for_cloud(
         }
         if let Some(source) = resolver.resolve_indexed_media(slug, &tile.source_path) {
             if crate::storage::cloud_files::is_content_offloaded(&source) {
-                return Ok(Some(tile.source_path.clone()));
+                return Ok(Some((tile.source_path.clone(), source)));
             }
         }
     }
@@ -1187,7 +1213,7 @@ enum PrimarySourceState {
     /// The file is not in the vault at all.
     Missing(String),
     /// The file exists, but iCloud is holding its contents.
-    InCloud(String),
+    InCloud(String, PathBuf),
 }
 
 /// Why a block's own media could not be turned into a preview.
@@ -1195,20 +1221,29 @@ enum PrimarySourceState {
 /// Three outcomes that used to be reported as one: a deleted file, contents
 /// parked in iCloud, and a format this build cannot decode all sent the reader
 /// looking for the wrong problem.
+///
+/// The primary preview of a card without a media file is made from its
+/// poster or from the media of its body (a post, an article): media of
+/// either kind in iCloud is `InCloud` too. Until 17.11.2026 only the media
+/// file was asked, and a post whose video iCloud held was reported as a
+/// picture the browser must decode, without the `In iCloud` mark.
 fn primary_source_state(
     resolver: &mut media_refs::MediaResolver<'_>,
     block: &Block,
 ) -> PrimarySourceState {
-    let Some(reference) = block.frontmatter.file.as_deref() else {
+    if let Some(reference) = block.frontmatter.file.as_deref() {
+        let Some(path) = resolver.resolve_indexed_media(&block.slug, reference) else {
+            return PrimarySourceState::Missing(reference.to_string());
+        };
+        if crate::storage::cloud_files::is_content_offloaded(&path) {
+            return PrimarySourceState::InCloud(reference.to_string(), path);
+        }
         return PrimarySourceState::Present;
-    };
-    let Some(path) = resolver.resolve_indexed_media(&block.slug, reference) else {
-        return PrimarySourceState::Missing(reference.to_string());
-    };
-    if crate::storage::cloud_files::is_content_offloaded(&path) {
-        return PrimarySourceState::InCloud(reference.to_string());
     }
-    PrimarySourceState::Present
+    match preview_plan::first_preview_source_in_cloud(block, resolver) {
+        Some((reference, path)) => PrimarySourceState::InCloud(reference, path),
+        None => PrimarySourceState::Present,
+    }
 }
 
 /// Persist a manifest that now carries artifact geometry.
@@ -1725,6 +1760,66 @@ mod tests {
         );
         let waits = crate::storage::cloud_waits::load(vault.derived_root());
         assert_eq!(waits.sessions.last().unwrap().slugs, vec!["Cloud".to_string()]);
+    }
+
+    /// «Отказ чтения» (SPEC_CLOUD_STORAGE.md): a full pass over a space where
+    /// iCloud refuses the reads of a picture and of a post's video
+    /// (`EDEADLK`) settles every card, so its count reaches the total and
+    /// the «Preparing previews» notice goes. Both cards wait as
+    /// `content_in_cloud`, with the `In iCloud` mark, and no text stands for
+    /// their media. The next full pass finds nothing to do: nothing is
+    /// written again and no card is announced as changed. Until 17.11.2026
+    /// the post was reported as media the browser must decode, its text was
+    /// written as its preview on every pass, and each pass handed the
+    /// browser the same refused files again.
+    #[test]
+    fn a_full_pass_over_media_icloud_refuses_settles_every_card_once() {
+        use crate::storage::cloud_files::test_seam;
+        let (_source, vault, conn) = setup();
+        let root = vault.root().to_path_buf();
+        image::RgbImage::from_pixel(32, 24, image::Rgb([10, 20, 30]))
+            .save_with_format(root.join("cloud.jpg"), image::ImageFormat::Jpeg)
+            .unwrap();
+        std::fs::write(root.join("clip.mp4"), b"the video").unwrap();
+        files::write_block_file(&vault, &image_block("Picture", "cloud.jpg")).unwrap();
+        std::fs::write(
+            root.join("Post.md"),
+            "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\n# Post\n\n![[clip.mp4]]\n",
+        )
+        .unwrap();
+        files::write_block_file(&vault, &text_block("Local")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        test_seam::refuse_reads_of(&root.join("cloud.jpg"));
+        test_seam::refuse_reads_of(&root.join("clip.mp4"));
+
+        let mut counts = Vec::new();
+        let first = reconcile_all_previews_with_progress(
+            &conn,
+            &vault,
+            &mut || true,
+            &mut |_| {},
+            &mut |progress| counts.push(progress),
+        )
+        .unwrap();
+
+        let last = counts.last().copied().expect("the pass counted its cards");
+        assert_eq!((last.processed, last.total), (3, 3), "{counts:?}");
+        for slug in ["Picture", "Post"] {
+            let failure = first
+                .failed
+                .iter()
+                .find(|failure| failure.slug == slug)
+                .unwrap_or_else(|| panic!("{slug} is not waiting: {first:?}"));
+            assert_eq!(failure.error_kind, PreviewErrorKind::ContentInCloud, "{failure:?}");
+            let light = crate::storage::block_queries::list_blocks_light(&conn).unwrap();
+            assert!(light.iter().any(|block| block.slug == slug && block.content_in_cloud));
+            assert!(!vault.thumb_path(slug).exists(), "a text placeholder stands for {slug}'s media");
+        }
+
+        let second = reconcile_all_previews(&conn, &vault).unwrap();
+        assert!(second.changed_slugs.is_empty(), "{second:?}");
+        assert_eq!(second.regenerated, 0, "{second:?}");
+        assert_eq!(second.failed.len(), 2, "{second:?}");
     }
 
     /// The preview pass that follows the first index resolves the media of

@@ -130,6 +130,10 @@ export function followMenuPanel(): void {
 /** A menu for the panel: what it holds, and how it was opened. */
 export interface MenuPanelMenu {
   spec: MenuSpec;
+  /** The menu at its largest while open, when it may grow past `spec`: a
+   *  line of text that may come. The panel's frame is set once for an
+   *  opening, by this (SPEC_MENU_WINDOW.md, МО28, МО29). */
+  largest?: MenuSpec;
   /** A key opened the menu: it lands at once and lights its first row
    *  (SPEC_MOTION_LEVELS.md, УД4). */
   byKey: boolean;
@@ -274,10 +278,14 @@ function failedAnswer(action: MenuAction): MenuAnswer {
   if (action.kind !== "widget") return { kind: "done" };
   switch (action.action.kind) {
     case "toggle_collection":
+    case "connect_cards":
       return { kind: "membership", made: false };
     case "check_collection_name":
       return { kind: "name_refusal", reason: null };
-    case "create_collection":
+    case "create_card":
+      return { kind: "failed", message: "Could not complete this action. Please try again." };
+    // An asking with nothing to answer but that it is over.
+    default:
       return { kind: "done" };
   }
 }
@@ -412,7 +420,7 @@ export function openMenuPanel(
   sessions.set(session.menu, session);
   current = session;
 
-  const { size, submenus } = menuSpecSize(menu.spec);
+  const { size, submenus } = menuSpecSize(menu.largest ?? menu.spec);
   openInMenuPanel({
     page: PAGE,
     menu: session.menu,

@@ -23,9 +23,9 @@ use crate::domain::block::{
 };
 use crate::domain::vault::VaultLayout;
 use crate::storage::preview_plan::{
-    resolve_upgrade_media, resolve_upgrade_media_with, PreviewUpgradeInput,
+    self, resolve_upgrade_media, resolve_upgrade_media_with, PreviewUpgradeInput,
 };
-use crate::storage::reconcile::{self, ReconcileReport};
+use crate::storage::reconcile::{self, SeenPath};
 use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
 use crate::watcher::events::VaultEvent;
 
@@ -381,6 +381,16 @@ fn spawn_thumb_jobs_worker(
                         }
                         continue;
                     }
+                    // A sweep runs on every return of the window and never
+                    // brings media down from iCloud: what the card shows stays,
+                    // and the preview pass, which may wait for iCloud, makes
+                    // what is missing (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
+                    if preview_plan::first_preview_source_in_cloud(&job.block, &mut resolver)
+                        .is_some()
+                    {
+                        skipped += 1;
+                        continue;
+                    }
 
                     let source = if outdated {
                         let upgrade = metadata_conn
@@ -726,6 +736,17 @@ mod preview_queue {
     }
 
     fn make_card_preview(vault: &VaultLayout, app: Option<&AppHandle>, block: &Block) {
+        // The watcher's queue never waits for iCloud: a card whose media is
+        // there keeps what it shows, and the preview pass queued with this
+        // job brings the media down (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
+        if crate::storage::preview_plan::first_preview_source_in_cloud(
+            block,
+            &mut crate::storage::media_refs::MediaResolver::new(vault),
+        )
+        .is_some()
+        {
+            return;
+        }
         let Ok(_write) = crate::storage::source_mutation::begin_write() else {
             return;
         };
@@ -758,7 +779,7 @@ mod preview_queue {
         let owns = db::open_or_create(&vault.index_db_path())
             .map(|conn| media_thumb_targets(&conn, vault, picture).iter().any(|owner| owner == slug))
             .unwrap_or(false);
-        if !owns {
+        if !owns || crate::storage::cloud_files::is_content_offloaded(picture) {
             return;
         }
         if let Err(error) =
@@ -849,6 +870,12 @@ fn emit_thumb_events(
         None
     };
 
+    // The browser reads the media through the asset protocol, and a file
+    // whose contents are in iCloud is not one it can draw: the preview pass
+    // brings it down, and the browser is asked once it is here
+    // (SPEC_CLOUD_STORAGE.md, «Отказ чтения»).
+    let slug_upgrade = slug_upgrade
+        .filter(|media| !crate::storage::cloud_files::is_content_offloaded(&media.path));
     if slug_upgrade.is_none() {
         return;
     }
@@ -1417,13 +1444,66 @@ fn mark_stale_index(app: Option<&AppHandle>, vault: &VaultLayout, pass: RemovalP
     }
 }
 
-pub fn handle_event(
+/// A watcher event with what the kept names of the space made of its path
+/// when it came (`reconcile::follow_path`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeenEvent {
+    pub event: VaultEvent,
+    pub path: SeenPath,
+}
+
+/// Take in an event of the watcher: the kept names of the space follow the
+/// file it is about (SPEC_INTEGRATION.md, «Индекс имён файлов»). Every event
+/// of a file a note can name passes here when it comes, the events the
+/// watcher does not handle further included (Mine's own writes).
+pub fn see_event(vault: &VaultLayout, event: VaultEvent) -> SeenEvent {
+    let path = reconcile::follow_path(vault, event.path());
+    SeenEvent { event, path }
+}
+
+/// What handling one batch of watcher events came to.
+#[derive(Debug, Default)]
+pub struct BatchOutcome {
+    /// The index or a preview the feed reads moved: the feed reloads
+    /// (`vault-changed`).
+    pub changed: bool,
+    /// The notes read again because a media file of the batch changed, by
+    /// slug.
+    pub reread: Vec<String>,
+    /// What went wrong with single events; the rest of the batch was
+    /// handled.
+    pub errors: Vec<anyhow::Error>,
+    /// Only a pass over the whole space settles what the batch saw, and the
+    /// caller asks for one now: a folder appeared, moved or went; a media
+    /// file went, which may be half of a rename the file identity pass
+    /// repairs; a note to read again has its contents in iCloud.
+    pub full_pass: bool,
+}
+
+/// Handle the events the watcher collected as one batch (SPEC_INTEGRATION.md,
+/// «Пачки событий и точное перечитывание»).
+///
+/// Repeated events of one path count once, as its last one. The notes come
+/// first, in the order their events came, with one file identity pass for
+/// all of them; then every media file of the batch in one pass that reads
+/// again only the notes that name them (`reconcile::reread_notes_naming`).
+/// A note indexed in this batch is not read again for its media: it was read
+/// with the file as it is. Until 16.11.2026 each media event ran a pass over
+/// the whole space, and each note event a file identity pass of its own.
+pub fn handle_batch(
     conn: &Connection,
     vault: &VaultLayout,
-    event: &VaultEvent,
+    events: &[SeenEvent],
     app: Option<&AppHandle>,
-) -> Result<bool> {
-    let _write = crate::storage::source_mutation::begin_write()?;
+) -> BatchOutcome {
+    let mut outcome = BatchOutcome::default();
+    let _write = match crate::storage::source_mutation::begin_write() {
+        Ok(write) => write,
+        Err(error) => {
+            outcome.errors.push(error);
+            return outcome;
+        }
+    };
     // Before any dispatch, commit removals whose rename-match window
     // expired. Keeps the pending queue bounded and ensures deferred
     // deletes are eventually visible to the frontend.
@@ -1432,125 +1512,273 @@ pub fn handle_event(
     });
     mark_stale_index(app, vault, pass);
 
-    match event {
-        VaultEvent::BlockChanged(path) => {
-            let identity = crate::storage::file_identity::reconcile(vault)?;
-            if let Some(new_slug) = path_to_slug(vault, path) {
-                let already_indexed = index::get_block(conn, &new_slug).ok().flatten().is_some();
-                if !already_indexed {
-                    for (old_slug, moved_slug) in identity.moved_markdown {
-                        if moved_slug == new_slug {
-                            if let Some(pending) = take_pending_by_slug(vault, &old_slug) {
-                                return perform_rename_match(
-                                    conn, vault, &pending, &new_slug, path, app,
-                                );
-                            }
-                        }
-                    }
+    // The last event of each path, in the order the last ones came.
+    let mut paths = std::collections::HashSet::new();
+    let mut last = events
+        .iter()
+        .rev()
+        .filter(|seen| paths.insert(seen.event.path()))
+        .collect::<Vec<_>>();
+    last.reverse();
+
+    let mut read_now = std::collections::BTreeSet::new();
+    let notes_changed = last
+        .iter()
+        .any(|seen| matches!(seen.event, VaultEvent::BlockChanged(_)));
+    let identity = if notes_changed {
+        match crate::storage::file_identity::reconcile(vault) {
+            Ok(identity) => Some(identity),
+            Err(error) => {
+                outcome.errors.push(error);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    for seen in &last {
+        match &seen.event {
+            // iCloud took the note's contents, which is an event too, or holds
+            // a newer note whose contents have not arrived. Reading it here
+            // would bring an evicted note straight back, or be refused
+            // (`EDEADLK`). An evicted note unchanged by its metadata is no
+            // news; a changed one is asked for, and the pass over the space
+            // reads it once it is here (SPEC_CLOUD_STORAGE.md, «Отказ
+            // чтения»). Until 17.11.2026 every eviction of a note was read
+            // here and failed: about 30 notes a batch.
+            VaultEvent::BlockChanged(path) if crate::storage::cloud_files::is_content_offloaded(path) => {
+                if !reconcile::note_unchanged_since_indexed(conn, vault, path) {
+                    crate::storage::icloud_downloads::request_downloads([path.as_path()]);
+                    outcome.full_pass = true;
                 }
-                // The same note is back where it was: its earlier removal is
-                // void (Ф7).
-                take_pending_by_slug(vault, &new_slug);
             }
-            return index_md_file(conn, vault, path, app);
-        }
-        VaultEvent::BlockDeleted(path) => {
-            if let Some(slug) = path_to_slug(vault, path) {
-                // Defer the removal into the rename-detection queue.
-                // Capture tags now so either a matching Create
-                // within the window can rename identity cleanly, or the
-                // expired drain can emit block:removed with the right
-                // channel list. The DB row itself is NOT removed yet —
-                // rename_slug on match would fail if we pre-deleted.
-                let tags = index::get_block(conn, &slug)
-                    .ok()
-                    .flatten()
-                    .map(|b| b.tags)
-                    .unwrap_or_default();
-                push_pending_remove(PendingRemove {
-                    vault_root: vault.root().to_path_buf(),
-                    slug,
-                    tags,
-                    deadline: Instant::now() + Duration::from_millis(RENAME_MATCH_WINDOW_MS),
-                    failed_attempts: 0,
-                });
-                // Treat as "no-change for now". If no match arrives, the
-                // watcher's timer commits it when the window passes.
-                return Ok(false);
+            VaultEvent::BlockChanged(path) => {
+                // Without the file identity pass a move cannot be told from
+                // a new note: the note waits for the next pass.
+                let Some(identity) = &identity else {
+                    continue;
+                };
+                match note_changed(conn, vault, path, identity, app) {
+                    Ok(changed) => {
+                        outcome.changed |= changed;
+                        read_now.extend(path_to_slug(vault, path));
+                    }
+                    Err(error) => outcome.errors.push(error),
+                }
             }
-        }
-        VaultEvent::MediaChanged(path) => {
-            let report = reconcile::reconcile_runtime_vault_with_progress(conn, vault, &|_, _| {})?;
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            // A picture is turned into its owners' thumbnails right here; any
-            // other preview of a card that shows this file (a video's frame,
-            // an article whose picture changed) is discarded and made again
-            // by the preview pass from what the file is now. A frame of the
-            // replaced video is never kept (`SPEC_AUDIT_FIXES.md`, Ф7, Г2.3).
-            let direct = if thumbnails::is_image_ext(&ext) {
-                media_thumb_targets(conn, vault, path)
-            } else {
-                Vec::new()
-            };
-            let owners = media_preview_owners(conn, vault, path, &report);
-            let mut discarded = false;
-            for slug in owners.iter().filter(|slug| !direct.contains(slug)) {
-                discarded |= discard_preview(vault, slug);
-            }
-            schedule_owner_previews(app, vault, &report, &owners);
-            for slug in direct {
-                spawn_thumb_from_picture(vault, path, slug, app);
-            }
-            // The feed reloads whenever the index or a preview it reads moved:
-            // a re-projected owner (new dimensions, a new poster on the way),
-            // or a preview that is gone.
-            return Ok(discarded || report_changed(&report));
-        }
-        VaultEvent::MediaDeleted(path) => {
-            let report = reconcile::reconcile_vault(conn, vault)?;
-            // The preview of every card that showed the file goes, the
-            // owning card's included: in a space laid out in folders the
-            // file's own slug is `Media/x`, the card's `Cards/x`
-            // (`SPEC_AUDIT_FIXES.md`, Ф7, Г2.3).
-            let owners = media_preview_owners(conn, vault, path, &report);
-            let mut discarded = false;
-            for slug in &owners {
-                discarded |= discard_preview(vault, slug);
-            }
-            schedule_owner_previews(app, vault, &report, &owners);
-            return Ok(discarded || report_changed(&report));
+            VaultEvent::BlockDeleted(path) => note_deleted(conn, vault, path),
+            VaultEvent::MediaChanged(_) | VaultEvent::MediaDeleted(_) => {}
         }
     }
-    Ok(false)
+
+    let mut media = Vec::new();
+    for seen in &last {
+        let (VaultEvent::MediaChanged(path) | VaultEvent::MediaDeleted(path)) = &seen.event else {
+            continue;
+        };
+        // A media file whose contents iCloud took is the file it was: the
+        // eviction keeps its name, size and time, and each card that shows it
+        // keeps its pictures (SPEC_CLOUD_STORAGE.md, Х5). A file changed on
+        // another Mac and not here yet is met by the pass over the space in
+        // the source stamps of the notes that name it. Until 17.11.2026 the
+        // eviction of a video or of a picture of an article discarded the
+        // thumbnails of the cards showing it, and nothing could make them
+        // again while the file stayed in iCloud.
+        if matches!(seen.event, VaultEvent::MediaChanged(_))
+            && crate::storage::cloud_files::is_content_offloaded(path)
+        {
+            continue;
+        }
+        match seen.path {
+            // What happened under a folder only a walk tells.
+            SeenPath::Folder => outcome.full_pass = true,
+            SeenPath::File | SeenPath::GoneFile => {
+                // A file that went may have been renamed: the file identity
+                // pass of a full pass repairs the notes that named it.
+                outcome.full_pass |= seen.path == SeenPath::GoneFile
+                    || matches!(seen.event, VaultEvent::MediaDeleted(_));
+                media.push(path.clone());
+            }
+        }
+    }
+    if !media.is_empty() {
+        match reconcile::reread_notes_naming(conn, vault, &media, &read_now) {
+            Ok(reread) => {
+                for error in &reread.errors {
+                    log::warn!(
+                        "a note naming a changed file was not read again: {} ({})",
+                        error.path,
+                        error.message
+                    );
+                }
+                outcome.full_pass |= reread.left_in_cloud;
+                outcome.changed |= settle_media_previews(conn, vault, &media, &reread, app);
+                outcome.reread = reread.reread;
+            }
+            Err(error) => {
+                outcome.errors.push(error);
+                // The index is behind the files until a pass over the space.
+                outcome.full_pass = true;
+            }
+        }
+    }
+    outcome
 }
 
-/// Whether a reconciliation changed what the index projects.
-fn report_changed(report: &ReconcileReport) -> bool {
-    !report.upserted.is_empty()
-        || !report.dependency_changed.is_empty()
-        || !report.removed.is_empty()
+/// Handle one event as a batch of its own, as the first event after quiet is
+/// handled: the path of the tests of single events.
+#[cfg(test)]
+pub(crate) fn handle_event(
+    conn: &Connection,
+    vault: &VaultLayout,
+    event: &VaultEvent,
+    app: Option<&AppHandle>,
+) -> Result<bool> {
+    let mut outcome = handle_batch(conn, vault, &[see_event(vault, event.clone())], app);
+    match outcome.errors.pop() {
+        Some(error) => Err(error),
+        None => Ok(outcome.changed),
+    }
 }
 
-/// The cards whose preview may show the media file at `path`: those whose
-/// dependency on a media file the reconciliation just saw change, and the
-/// ones [`media_thumb_targets`] names (the cards whose media file it is).
-fn media_preview_owners(
+/// A note appeared or changed: index it, as a move when the file identity
+/// pass of the batch confirmed one and its removal still waits.
+fn note_changed(
     conn: &Connection,
     vault: &VaultLayout,
     path: &Path,
-    report: &ReconcileReport,
-) -> Vec<String> {
-    let mut owners = media_thumb_targets(conn, vault, path);
-    for slug in &report.dependency_changed {
-        if !owners.contains(slug) {
-            owners.push(slug.clone());
+    identity: &crate::storage::file_identity::IdentityRefresh,
+    app: Option<&AppHandle>,
+) -> Result<bool> {
+    if let Some(new_slug) = path_to_slug(vault, path) {
+        let already_indexed = index::get_block(conn, &new_slug).ok().flatten().is_some();
+        if !already_indexed {
+            for (old_slug, moved_slug) in &identity.moved_markdown {
+                if *moved_slug == new_slug {
+                    if let Some(pending) = take_pending_by_slug(vault, old_slug) {
+                        return perform_rename_match(conn, vault, &pending, &new_slug, path, app);
+                    }
+                }
+            }
+        }
+        // The same note is back where it was: its earlier removal is
+        // void (Ф7).
+        take_pending_by_slug(vault, &new_slug);
+    }
+    index_md_file(conn, vault, path, app)
+}
+
+/// A note went: defer its removal into the rename-detection queue. Tags are
+/// captured now so either a matching appearance within the window can
+/// rename identity cleanly, or the expired drain can emit `block:removed`
+/// with the right channel list. The row itself is not removed yet:
+/// `rename_slug` on a match would fail if it were. If no match arrives, the
+/// watcher's timer commits the removal when the window passes.
+fn note_deleted(conn: &Connection, vault: &VaultLayout, path: &Path) {
+    let Some(slug) = path_to_slug(vault, path) else {
+        return;
+    };
+    let tags = index::get_block(conn, &slug)
+        .ok()
+        .flatten()
+        .map(|b| b.tags)
+        .unwrap_or_default();
+    push_pending_remove(PendingRemove {
+        vault_root: vault.root().to_path_buf(),
+        slug,
+        tags,
+        deadline: Instant::now() + Duration::from_millis(RENAME_MATCH_WINDOW_MS),
+        failed_attempts: 0,
+    });
+}
+
+/// Bring the previews of the cards that show the media `files` of a batch
+/// up to what the files are now, after the notes that name them were read
+/// again. A picture is turned into its owners' thumbnails right here; any
+/// other preview of a card that shows a file (a video's frame, an article
+/// whose picture changed, a card whose file went) is discarded and made
+/// again by the preview pass from what the file is now. A frame of a
+/// replaced video is never kept (`SPEC_AUDIT_FIXES.md`, Ф7, Г2.3).
+///
+/// Returns whether the feed must reload: the index moved (a note was read
+/// again: new dimensions, a new poster on the way), or a preview is gone.
+fn settle_media_previews(
+    conn: &Connection,
+    vault: &VaultLayout,
+    files: &[PathBuf],
+    reread: &reconcile::RereadNotes,
+    app: Option<&AppHandle>,
+) -> bool {
+    let rows = media_files_of(conn, reread.naming.keys());
+    let mut resolver = match reconcile::kept_names_resolver(vault) {
+        Ok(resolver) => resolver,
+        Err(error) => {
+            log::warn!("media owner lookup failed for {}: {error:#}", vault.root().display());
+            return !reread.reread.is_empty();
+        }
+    };
+    let mut discarded = false;
+    let mut previews = reread
+        .reread
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    for path in files {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        // The cards whose media file this is, and every card that names it.
+        let targets = media_owners_among(vault, path, &rows, &mut resolver);
+        let name = reconcile::file_name_key(path);
+        let mut owners = targets.clone();
+        for (slug, names) in &reread.naming {
+            if name.as_ref().is_some_and(|name| names.contains(name)) && !owners.contains(slug) {
+                owners.push(slug.clone());
+            }
+        }
+        let direct = if thumbnails::is_image_ext(&ext) && path.exists() {
+            targets
+        } else {
+            Vec::new()
+        };
+        for slug in owners.iter().filter(|slug| !direct.contains(slug)) {
+            discarded |= discard_preview(vault, slug);
+        }
+        previews.extend(owners);
+        for slug in direct {
+            spawn_thumb_from_picture(vault, path, slug, app);
         }
     }
-    owners
+    if let (Some(app), false) = (app, previews.is_empty()) {
+        if let Err(error) = schedule_preview_reconcile(app, vault.clone(), previews, false) {
+            log::warn!("failed to schedule previews after a media change: {error}");
+        }
+    }
+    discarded || !reread.reread.is_empty()
+}
+
+/// The media file each of the cards `slugs` has in the index.
+fn media_files_of<'a>(
+    conn: &Connection,
+    slugs: impl Iterator<Item = &'a String>,
+) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    for slug in slugs {
+        let media_file = conn.query_row(
+            "SELECT media_file FROM blocks
+             WHERE slug = ?1 AND media_file IS NOT NULL AND media_file != ''",
+            [slug],
+            |row| row.get::<_, String>(0),
+        );
+        match media_file {
+            Ok(media_file) => rows.push((slug.clone(), media_file)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(error) => log::warn!("media owner lookup failed for {slug}: {error:#}"),
+        }
+    }
+    rows
 }
 
 /// Remove the preview standing for `slug` and its reduced levels, so no
@@ -1568,36 +1796,6 @@ fn discard_preview(vault: &VaultLayout, slug: &str) -> bool {
     };
     thumbnails::remove_thumb_levels(vault, slug);
     discarded
-}
-
-/// Queue the preview pass for the cards a media change touched, as a
-/// freshness pass does for the cards it re-projects: every owner and every
-/// changed card by name, the whole space when cards left the index. The
-/// pass makes what is missing or stale, and tells the feed.
-fn schedule_owner_previews(
-    app: Option<&AppHandle>,
-    vault: &VaultLayout,
-    report: &ReconcileReport,
-    owners: &[String],
-) {
-    let Some(app) = app else {
-        return;
-    };
-    let slugs = report
-        .upserted
-        .iter()
-        .chain(&report.dependency_changed)
-        .chain(owners)
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    if slugs.is_empty() && report.removed.is_empty() {
-        return;
-    }
-    if let Err(error) =
-        schedule_preview_reconcile(app, vault.clone(), slugs, !report.removed.is_empty())
-    {
-        log::warn!("failed to schedule previews after a media change: {error}");
-    }
 }
 
 /// Make the thumbnail of `slug` from the picture at `picture` in the space's
@@ -1635,6 +1833,24 @@ fn spawn_thumb_from_picture(
 /// flat space a picture `x.jpg` became the preview of the card `x`, whatever
 /// that card showed, and in folders `Media/x` named no card at all.
 fn media_thumb_targets(conn: &Connection, vault: &VaultLayout, path: &Path) -> Vec<String> {
+    let rows = match crate::storage::block_queries::list_media_files(conn) {
+        Ok(rows) => rows,
+        Err(error) => {
+            log::warn!("media owner lookup failed for {}: {error:#}", path.display());
+            return Vec::new();
+        }
+    };
+    media_owners_among(vault, path, &rows, &mut media_refs::MediaResolver::new(vault))
+}
+
+/// [`media_thumb_targets`] among the cards of `rows`, each with its media
+/// file as the index holds it.
+fn media_owners_among(
+    vault: &VaultLayout,
+    path: &Path,
+    rows: &[(String, String)],
+    resolver: &mut media_refs::MediaResolver<'_>,
+) -> Vec<String> {
     let (Some(relative), Some(name)) = (
         vault.root_relative_reference(path),
         path.file_name().and_then(|name| name.to_str()),
@@ -1644,30 +1860,22 @@ fn media_thumb_targets(conn: &Connection, vault: &VaultLayout, path: &Path) -> V
     let fold = |text: &str| -> String { text.nfc().collect::<String>().to_lowercase() };
     let relative = fold(&relative);
     let name = fold(name);
-    let rows = match crate::storage::block_queries::list_media_files(conn) {
-        Ok(rows) => rows,
-        Err(error) => {
-            log::warn!("media owner lookup failed for {}: {error:#}", path.display());
-            return Vec::new();
-        }
-    };
     let present = path.exists();
-    let mut resolver = media_refs::MediaResolver::new(vault);
     let mut targets = Vec::new();
     for (slug, media_file) in rows {
-        let written = fold(&media_file);
-        let decoded = fold(&percent_encoding::percent_decode_str(&media_file).decode_utf8_lossy());
+        let written = fold(media_file);
+        let decoded = fold(&percent_encoding::percent_decode_str(media_file).decode_utf8_lossy());
         if !written.contains(&name) && !decoded.contains(&name) {
             continue;
         }
         let owns = written == relative
             || (present
-                && crate::domain::vault::validate_slug(&slug).is_ok()
+                && crate::domain::vault::validate_slug(slug).is_ok()
                 && resolver
-                    .resolve_indexed_media(&slug, &media_file)
+                    .resolve_indexed_media(slug, media_file)
                     .is_some_and(|resolved| files::names_same_entry(&resolved, path) || resolved == path));
-        if owns && !targets.contains(&slug) {
-            targets.push(slug);
+        if owns && !targets.contains(slug) {
+            targets.push(slug.clone());
         }
     }
     targets
@@ -2417,13 +2625,20 @@ mod tests {
         flush_pending_for_test(&conn, &vault, None);
     }
 
+    /// SPEC_INTEGRATION.md, «Переименование медиа снаружи»: a media file
+    /// renamed outside Mine reaches the watcher as the old path gone and the
+    /// new one there. The batch reads again the notes that named the file
+    /// and asks for a pass over the space at once; that pass, with its file
+    /// identity pass, repairs the reference. Until 16.11.2026 every media
+    /// event ran such a pass itself.
     #[test]
-    fn media_event_repairs_explicit_target_after_external_move() {
+    fn a_media_move_outside_is_repaired_by_the_pass_its_batch_asks_for() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
         std::fs::create_dir_all(dir.path().join("Media")).unwrap();
-        std::fs::write(dir.path().join("Media/original.jpg"), b"original").unwrap();
+        let original = dir.path().join("Media/original.jpg");
+        std::fs::write(&original, b"original").unwrap();
         std::fs::write(
             dir.path().join("Card.md"),
             "---\ntype: image\nfile: \"[[Media/original.jpg]]\"\n---\n",
@@ -2435,20 +2650,294 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("Other")).unwrap();
         std::fs::write(dir.path().join("Other/original.jpg"), b"different").unwrap();
         let moved = dir.path().join("Media/moved.jpg");
-        std::fs::rename(dir.path().join("Media/original.jpg"), &moved).unwrap();
-        handle_event(
+        std::fs::rename(&original, &moved).unwrap();
+        let outcome = handle_batch(
             &conn,
             &vault,
-            &VaultEvent::MediaChanged(moved.clone()),
+            &[
+                see_event(&vault, VaultEvent::MediaDeleted(original)),
+                see_event(&vault, VaultEvent::MediaChanged(moved.clone())),
+            ],
             None,
-        )
-        .unwrap();
+        );
 
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(outcome.reread, ["Card"], "the note that named the file is read at once");
+        assert!(outcome.full_pass, "a media file that went asks for a pass over the space");
+        // The pass the watcher asks the freshness coordinator for.
+        crate::storage::reconcile::reconcile_runtime_vault_with_progress(&conn, &vault, &|_, _| {})
+            .unwrap();
         let card = index::get_block(&conn, "Card").unwrap().unwrap();
         let reference = card.media_file.as_deref().unwrap();
         assert_eq!(
             crate::storage::media_refs::resolve_indexed_media(&vault, "Card", reference),
             Some(moved)
+        );
+    }
+
+    /// A space in three folders with `cards` picture cards, each naming a
+    /// picture of its own in `Media/`, indexed by a pass over the space.
+    fn space_of_picture_cards(cards: usize) -> (tempfile::TempDir, VaultLayout, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        for folder in ["Cards", "Media"] {
+            std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        }
+        for card in 0..cards {
+            std::fs::write(dir.path().join(format!("Media/picture-{card}.jpg")), b"picture").unwrap();
+            std::fs::write(
+                dir.path().join(format!("Cards/Card {card}.md")),
+                format!("---\ntype: image\nfile: \"[[picture-{card}.jpg]]\"\nsaved_at: 2026-07-10T00:00:00Z\n---\n"),
+            )
+            .unwrap();
+        }
+        let report = reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(report.upserted.len(), cards);
+        (dir, vault, conn)
+    }
+
+    /// SPEC_INTEGRATION.md, «Точное перечитывание» (AUDIT_PERFORMANCE.md,
+    /// Б1): the media files of one batch are one pass, which walks no
+    /// space and reads again exactly the notes that name them. Until
+    /// 16.11.2026 a hundred files were a hundred passes over the whole
+    /// space.
+    #[test]
+    fn a_hundred_media_events_of_one_batch_make_one_pass() {
+        let (dir, vault, conn) = space_of_picture_cards(120);
+        let mut events = Vec::new();
+        for card in 0..100 {
+            let picture = dir.path().join(format!("Media/picture-{card}.jpg"));
+            std::fs::write(&picture, b"another picture, longer").unwrap();
+            // A file often reports more than once.
+            events.push(see_event(&vault, VaultEvent::MediaChanged(picture.clone())));
+            events.push(see_event(&vault, VaultEvent::MediaChanged(picture)));
+        }
+        let passes = reconcile::reread_passes();
+        let walks = (reconcile::inventory_walks(), media_refs::link_index_builds());
+
+        let outcome = handle_batch(&conn, &vault, &events, None);
+
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(reconcile::reread_passes() - passes, 1, "one pass for the batch");
+        assert_eq!(
+            (reconcile::inventory_walks(), media_refs::link_index_builds()),
+            walks,
+            "the batch walked the space"
+        );
+        let mut expected = (0..100).map(|card| format!("Cards/Card {card}")).collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(outcome.reread, expected);
+        assert!(outcome.changed);
+        assert!(!outcome.full_pass, "files that changed ask for no pass over the space");
+        // The index holds the files as they are: a pass finds nothing.
+        let pass = reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!((pass.unchanged, pass.content_reads), (120, 0), "{pass:?}");
+    }
+
+    /// Поправка пользователя 15.11.2026: a file that lands in `Media/` after
+    /// the note that names it finds the note by its name. The note recorded
+    /// the missing file at a path beside itself (`Cards/late.jpg`), which
+    /// the file never takes; the event is enough, with no pass over the
+    /// space and no file identity pass.
+    #[test]
+    fn a_file_that_lands_in_media_after_its_note_finds_the_note_by_name() {
+        let (dir, vault, conn) = space_of_picture_cards(2);
+        std::fs::write(
+            dir.path().join("Cards/Late.md"),
+            "---\ntype: image\nfile: \"[[late.jpg]]\"\nsaved_at: 2026-07-10T00:00:00Z\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Cards/Article.md"),
+            "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\nText.\n\n![](../Media/Late.JPG)\n",
+        )
+        .unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let card = index::get_block(&conn, "Cards/Late").unwrap().unwrap();
+        assert_ne!(card.media_file.as_deref(), Some("Media/late.jpg"), "the file is not there yet");
+        let walks = reconcile::inventory_walks();
+
+        let landed = dir.path().join("Media/late.jpg");
+        std::fs::write(&landed, b"the picture").unwrap();
+        let outcome = handle_batch(
+            &conn,
+            &vault,
+            &[see_event(&vault, VaultEvent::MediaChanged(landed.clone()))],
+            None,
+        );
+
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(outcome.reread, ["Cards/Article", "Cards/Late"]);
+        assert!(outcome.changed && !outcome.full_pass);
+        assert_eq!(reconcile::inventory_walks(), walks, "the event walked the space");
+        let card = index::get_block(&conn, "Cards/Late").unwrap().unwrap();
+        assert_eq!(card.media_file.as_deref(), Some("Media/late.jpg"));
+        assert_eq!(
+            crate::storage::media_refs::resolve_indexed_media(&vault, "Cards/Late", "Media/late.jpg"),
+            Some(landed)
+        );
+        // The stamps hold the file where it is: a pass finds nothing to read.
+        let pass = reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(pass.content_reads, 0, "{pass:?}");
+    }
+
+    /// The notes of a batch are handled before its media, whatever order
+    /// their events came in: the note is read once, with the file there,
+    /// and is not read again for the file.
+    #[test]
+    fn notes_of_a_batch_are_handled_before_its_media() {
+        let (dir, vault, conn) = space_of_picture_cards(1);
+        let note = dir.path().join("Cards/Late.md");
+        let source = |text: &str| {
+            format!("---\ntype: image\nfile: \"[[late.jpg]]\"\nsaved_at: 2026-07-10T00:00:00Z\n---\n{text}")
+        };
+        std::fs::write(&note, source("")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let landed = dir.path().join("Media/late.jpg");
+        std::fs::write(&landed, b"the picture").unwrap();
+        std::fs::write(&note, source("Edited as the picture came.\n")).unwrap();
+        let outcome = handle_batch(
+            &conn,
+            &vault,
+            &[
+                see_event(&vault, VaultEvent::MediaChanged(landed)),
+                see_event(&vault, VaultEvent::BlockChanged(note)),
+            ],
+            None,
+        );
+
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert!(outcome.reread.is_empty(), "the note was read a second time: {:?}", outcome.reread);
+        let card = index::get_block(&conn, "Cards/Late").unwrap().unwrap();
+        assert_eq!(card.media_file.as_deref(), Some("Media/late.jpg"));
+        assert!(card.body.contains("Edited as the picture came."));
+    }
+
+    /// A folder that appears, moves or goes is no file a note names: only a
+    /// walk tells what happened under it. The batch asks for a pass over
+    /// the space, and the names kept for the space are dropped, to be
+    /// listed again.
+    #[test]
+    fn a_folder_event_asks_for_a_full_pass_and_drops_the_kept_names() {
+        let (dir, vault, conn) = space_of_picture_cards(2);
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/picture-0.jpg"), Some(true));
+
+        let moved = dir.path().join("Pictures");
+        std::fs::rename(dir.path().join("Media"), &moved).unwrap();
+        let events = [
+            see_event(&vault, VaultEvent::MediaDeleted(dir.path().join("Media"))),
+            see_event(&vault, VaultEvent::MediaChanged(moved)),
+        ];
+
+        assert_eq!(events[0].path, SeenPath::Folder);
+        assert_eq!(events[1].path, SeenPath::Folder);
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/picture-0.jpg"), None);
+        let outcome = handle_batch(&conn, &vault, &events, None);
+        assert!(outcome.full_pass);
+        assert!(outcome.reread.is_empty());
+        // The pass the batch asks for lists the space again.
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Pictures/picture-0.jpg"), Some(true));
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/picture-0.jpg"), Some(false));
+    }
+
+    /// The names kept for a space cannot stay apart from the disk: a file
+    /// whose event the watcher lost is in them after the next pass over the
+    /// space, and a file whose removal it lost is out of them.
+    #[test]
+    fn a_full_pass_replaces_names_the_watcher_lost() {
+        let (dir, vault, conn) = space_of_picture_cards(2);
+        let followed = dir.path().join("Media/followed.jpg");
+        std::fs::write(&followed, b"seen").unwrap();
+        assert_eq!(
+            see_event(&vault, VaultEvent::MediaChanged(followed)).path,
+            SeenPath::File
+        );
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/followed.jpg"), Some(true));
+
+        std::fs::write(dir.path().join("Media/unseen.jpg"), b"no event came").unwrap();
+        std::fs::remove_file(dir.path().join("Media/picture-1.jpg")).unwrap();
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/unseen.jpg"), Some(false));
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/picture-1.jpg"), Some(true));
+
+        reconcile::reconcile_vault_for_action(&conn, &vault).unwrap();
+
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/unseen.jpg"), Some(true));
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/picture-1.jpg"), Some(false));
+        assert_eq!(reconcile::kept_names_hold(vault.root(), "Media/followed.jpg"), Some(true));
+    }
+
+    /// Media events timed in each space; the limit holds for their median.
+    const TIMED_MEDIA_EVENTS: usize = 21;
+    /// Б1: one media event, whatever the size of the space.
+    const MEDIA_EVENT_LIMIT: Duration = Duration::from_millis(20);
+    /// The larger space the same limit is asserted on: three times the notes
+    /// of the timed space.
+    const LARGER_SPACE_NOTES: usize = 30_000;
+
+    /// The median and the slowest of `TIMED_MEDIA_EVENTS` media events in a
+    /// space of `notes` notes of the timed make-up, each a picture replaced:
+    /// the one note that names it is found and read again, and the space is
+    /// not walked.
+    fn timed_media_events(notes: usize) -> (Duration, Duration) {
+        use crate::storage::reconcile::timed_space;
+        let (directory, derived) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let vault = VaultLayout::with_derived_root(
+            directory.path().to_path_buf(),
+            derived.path().to_path_buf(),
+        );
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        timed_space::write_notes(vault.root(), notes);
+        assert_eq!(
+            reconcile::reconcile_vault(&conn, &vault).unwrap().upserted.len(),
+            notes + timed_space::COLLECTIONS
+        );
+        let walks = reconcile::inventory_walks();
+
+        let mut times = Vec::with_capacity(TIMED_MEDIA_EVENTS);
+        for event in 0..TIMED_MEDIA_EVENTS {
+            let note = event * (notes / TIMED_MEDIA_EVENTS / 4) * 4;
+            let media = timed_space::media_of(note).expect("every fourth note shows a picture");
+            let path = vault.root().join(media);
+            std::fs::write(&path, format!("the picture replaced, {event}")).unwrap();
+            let started = Instant::now();
+            let seen = see_event(&vault, VaultEvent::MediaChanged(path));
+            let outcome = handle_batch(&conn, &vault, &[seen], None);
+            times.push(started.elapsed());
+            assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+            assert_eq!(outcome.reread, [format!("Cards/Note {note:05}")]);
+            assert!(outcome.changed && !outcome.full_pass);
+        }
+        assert_eq!(reconcile::inventory_walks(), walks, "a media event walked the space");
+        times.sort();
+        (times[TIMED_MEDIA_EVENTS / 2], times[TIMED_MEDIA_EVENTS - 1])
+    }
+
+    /// AUDIT_PERFORMANCE.md, Б1 (SPEC_INTEGRATION.md, «Точное
+    /// перечитывание»): a media file that changes is handled within
+    /// `MEDIA_EVENT_LIMIT` in a space of 10 000 notes and, within the same
+    /// limit, in one of 30 000: what an event costs does not grow with the
+    /// space. Until 16.11.2026 each such event ran a pass over the whole
+    /// space. The limit is an optimised build's: a speed test, run by
+    /// `test:rust-speed` alone (ARCHITECTURE.md, «Тесты скорости Rust»).
+    #[test]
+    #[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]
+    fn a_media_event_in_a_space_of_10_000_notes_answers_within_its_limit() {
+        let timed = crate::storage::reconcile::timed_space::NOTES;
+        let (median, slowest) = timed_media_events(timed);
+        let (larger_median, larger_slowest) = timed_media_events(LARGER_SPACE_NOTES);
+        eprintln!(
+            "media event: in a space of {timed} notes median {median:?}, slowest {slowest:?}; in a space of {LARGER_SPACE_NOTES} notes median {larger_median:?}, slowest {larger_slowest:?}; {TIMED_MEDIA_EVENTS} events each, limit {MEDIA_EVENT_LIMIT:?}, asserted for both",
+        );
+        assert!(
+            median <= MEDIA_EVENT_LIMIT,
+            "a media event in {timed} notes {median:?} over {MEDIA_EVENT_LIMIT:?} (slowest {slowest:?})"
+        );
+        assert!(
+            larger_median <= MEDIA_EVENT_LIMIT,
+            "a media event in {LARGER_SPACE_NOTES} notes {larger_median:?} over {MEDIA_EVENT_LIMIT:?} (slowest {larger_slowest:?})"
         );
     }
 
@@ -2670,6 +3159,43 @@ mod tests {
             .expect("the card has a preview to reconcile");
         let remade = std::fs::read(&preview).expect("the preview is made again");
         assert_ne!(remade, b"preview of the first media");
+    }
+
+    /// «Отказ чтения» (SPEC_CLOUD_STORAGE.md): iCloud takes away the video a
+    /// card embeds, and this Mac may not read it back (`EDEADLK`). The
+    /// eviction reaches the watcher as an event on the file, but the file is
+    /// the one the card's preview was made from: the preview stays (Х5).
+    /// The preview pass over the card does not trade it for the card's text
+    /// either, and says the card waits for iCloud. Until 17.11.2026 the
+    /// event discarded the preview, and nothing could make it again while the
+    /// video stayed in iCloud: an empty tile in the sidebar, in the window on
+    /// hover and in the open card.
+    #[test]
+    fn an_evicted_video_keeps_the_preview_of_the_card_that_shows_it() {
+        use crate::storage::cloud_files::test_seam;
+        let (_dir, vault, conn, video, preview) = card_with_media_in_folders(
+            "Film",
+            "type: article\n",
+            "# Film\n\n![[clip.mp4]]\n",
+            "clip.mp4",
+            b"the video",
+        );
+        test_seam::refuse_reads_of(&video);
+
+        let changed = handle_event(&conn, &vault, &VaultEvent::MediaChanged(video.clone()), None).unwrap();
+
+        assert!(!changed, "an eviction is no news for the feed");
+        assert_eq!(std::fs::read(&preview).unwrap(), b"preview of the first media");
+
+        let outcome = crate::storage::derived_preview::reconcile_preview_for_slug(&conn, &vault, "Cards/Film")
+            .unwrap()
+            .expect("the card has a preview to reconcile");
+        assert_eq!(
+            outcome.failure.map(|failure| failure.error_kind),
+            Some(crate::storage::derived_preview::PreviewErrorKind::ContentInCloud)
+        );
+        assert_eq!(std::fs::read(&preview).unwrap(), b"preview of the first media");
+        assert!(test_seam::reads_of(&video) > 0, "the pass did not try the video");
     }
 
     /// When the watcher's own preview of an edited card lands, relative to

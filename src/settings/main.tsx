@@ -16,6 +16,7 @@ import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 import { answerSwipeQuestion } from "@/lib/horizontalScroller";
+import { followMenuPanel } from "@/lib/menuPanelSource";
 
 // The settings window applies the stored theme itself — it cannot rely on the
 // main window having done so for this webview.
@@ -48,3 +49,8 @@ ReactDOM.createRoot(rootElement).render(
 
 void hydrateCommandOverrides();
 watchCommandOverrides();
+
+// The window's menus open in the menu panel when the menu mode is `window`
+// (SPEC_MENU_WINDOW.md, МО22, group Д): this page is a source of menus like
+// a tab's.
+followMenuPanel();

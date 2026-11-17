@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
@@ -68,9 +68,15 @@ const SOURCE_INDEX_STATE_COLUMNS: &[(&str, &str)] = &[
     ("source_stamp", "TEXT"),
     ("updated_at", "TEXT"),
 ];
+const SOURCE_DEPENDENCY_NAME_COLUMNS: &[(&str, &str)] = &[("name", "TEXT"), ("slug", "TEXT")];
 const PROJECTION_STATE_COLUMNS: &[(&str, &str)] =
     &[("singleton", "INTEGER"), ("generation", "INTEGER")];
-const SEARCH_STATE_COLUMNS: &[(&str, &str)] = &[("singleton", "INTEGER"), ("revision", "INTEGER")];
+const SEARCH_STATE_COLUMNS: &[(&str, &str)] = &[
+    ("singleton", "INTEGER"),
+    ("revision", "INTEGER"),
+    ("source_revision", "INTEGER"),
+    ("synced_source_revision", "INTEGER"),
+];
 const BLOCK_TAG_COLUMNS: &[(&str, &str)] = &[("block_id", "INTEGER"), ("tag", "TEXT")];
 const CHANNEL_COLUMNS: &[(&str, &str)] = &[
     ("id", "INTEGER"),
@@ -89,7 +95,9 @@ const SEARCH_DOCUMENT_STATE_COLUMNS: &[(&str, &str)] = &[
     ("slug", "TEXT"),
     ("document_hash", "TEXT"),
     ("updated_at", "TEXT"),
+    ("source_stamp", "TEXT"),
 ];
+const SEARCH_WORD_COLUMNS: &[(&str, &str)] = &[("chars", "INTEGER"), ("word", "TEXT")];
 const SEARCH_CHUNK_COLUMNS: &[(&str, &str)] = &[
     ("id", "INTEGER"),
     ("block_id", "INTEGER"),
@@ -115,6 +123,7 @@ const VAULT_CONFLICT_COLUMNS: &[(&str, &str)] = &[("path", "TEXT"), ("detected_a
 const REQUIRED_TABLE_COLUMNS: &[(&str, &[(&str, &str)])] = &[
     ("blocks", BLOCK_COLUMNS),
     ("source_index_state", SOURCE_INDEX_STATE_COLUMNS),
+    ("source_dependency_names", SOURCE_DEPENDENCY_NAME_COLUMNS),
     ("projection_state", PROJECTION_STATE_COLUMNS),
     ("search_state", SEARCH_STATE_COLUMNS),
     ("block_tags", BLOCK_TAG_COLUMNS),
@@ -123,6 +132,7 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[(&str, &str)])] = &[
     ("related_note_links", LINK_COLUMNS),
     ("search_document_state", SEARCH_DOCUMENT_STATE_COLUMNS),
     ("search_chunks", SEARCH_CHUNK_COLUMNS),
+    ("search_words", SEARCH_WORD_COLUMNS),
     ("search_embeddings", SEARCH_EMBEDDING_COLUMNS),
     ("vault_conflicts", VAULT_CONFLICT_COLUMNS),
 ];
@@ -142,6 +152,12 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_blocks_association_author",
     "idx_blocks_association_site",
     "idx_blocks_association_address",
+    "idx_source_dependency_names_slug",
+    "idx_blocks_feed_newest",
+    "idx_blocks_feed_oldest",
+    "idx_blocks_author_feed_newest",
+    "idx_blocks_author_feed_oldest",
+    "idx_channels_source_slug",
 ];
 
 const REQUIRED_TRIGGERS: &[&str] = &[
@@ -169,6 +185,11 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "search_embeddings_ai",
     "search_embeddings_au",
     "search_embeddings_ad",
+    "search_chunk_terms_ad",
+    "search_source_ai",
+    "search_source_au",
+    "source_dependency_names_ad",
+    "source_dependency_names_au",
 ];
 
 pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
@@ -200,6 +221,9 @@ pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
                     .context("failed to create index build state")?,
                 6 => migrate_v5_to_v6(conn)?,
                 7 => migrate_v6_to_v7(conn)?,
+                8 => migrate_v7_to_v8(conn)?,
+                9 => migrate_v8_to_v9(conn)?,
+                10 => migrate_v9_to_v10(conn)?,
                 _ => bail!("missing SQLite migration implementation for version {target}"),
             }
             conn.pragma_update(None, "user_version", target)
@@ -667,6 +691,140 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Search that reads no more text than it finds (SPEC_SEARCH.md, «Устройство
+/// поиска на большом пространстве»).
+///
+/// `search_words` is the dictionary of the words the chunks hold and
+/// `search_word_chunks` names the chunks of each word; `search_metadata_terms`
+/// holds the words of the author and address chunks. Both FTS5 tables keep no
+/// content and are keyed by the chunk's id, so a deleted chunk takes its row
+/// out with one trigger, also when it goes with its deleted card. Their
+/// `ascii` tokenizer leaves the words the search engine writes untouched.
+///
+/// `search_document_state.source_stamp` is the stamp of the card fields a
+/// document was built from. `search_state.source_revision` counts the changes
+/// of those fields, and `synced_source_revision` is the count the documents
+/// were last compared at: while both are equal a search compares nothing.
+/// Documents written before this version have no stamp and no words; the
+/// next sync reads them once and keeps their chunks and vectors.
+fn migrate_v7_to_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE search_document_state ADD COLUMN source_stamp TEXT;
+         ALTER TABLE search_state ADD COLUMN source_revision INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE search_state ADD COLUMN synced_source_revision INTEGER;
+
+         CREATE TABLE search_words (
+             chars INTEGER NOT NULL,
+             word TEXT NOT NULL,
+             PRIMARY KEY (chars, word)
+         ) WITHOUT ROWID;
+         CREATE VIRTUAL TABLE search_word_chunks USING fts5(
+             words, content='', contentless_delete=1, detail=none, tokenize='ascii'
+         );
+         CREATE VIRTUAL TABLE search_metadata_terms USING fts5(
+             terms, content='', contentless_delete=1, detail=none, tokenize='ascii'
+         );
+
+         CREATE TRIGGER search_chunk_terms_ad AFTER DELETE ON search_chunks BEGIN
+             DELETE FROM search_word_chunks WHERE rowid = old.id;
+             DELETE FROM search_metadata_terms WHERE rowid = old.id;
+         END;
+         CREATE TRIGGER search_source_ai AFTER INSERT ON blocks BEGIN
+             UPDATE search_state SET source_revision = source_revision + 1 WHERE singleton = 1;
+         END;
+         CREATE TRIGGER search_source_au
+         AFTER UPDATE OF slug, card_kind, description, author, url, body_hash ON blocks
+         WHEN old.slug IS NOT new.slug
+              OR old.card_kind IS NOT new.card_kind
+              OR old.description IS NOT new.description
+              OR old.author IS NOT new.author
+              OR old.url IS NOT new.url
+              OR old.body_hash IS NOT new.body_hash
+         BEGIN
+             UPDATE search_state SET source_revision = source_revision + 1 WHERE singleton = 1;
+         END;",
+    )
+    .context("failed to add the search word index and document stamps")?;
+    Ok(())
+}
+
+/// The notes that name a file, found by the file's name without reading
+/// every source stamp (SPEC_STORAGE.md, `source_dependency_names`;
+/// SPEC_INTEGRATION.md, «Точное перечитывание»).
+///
+/// `source_dependency_names` holds, for each note, the names of the files
+/// its recorded dependencies end in. The code that writes a note's stamp
+/// writes its names (`reconcile::write_source_state`); the two triggers take
+/// a note's names out when its stamp row goes or changes, so names never
+/// outlive the stamp they were read from. Stamps written before this version
+/// have no names: they are dropped, and the next pass reads every note
+/// again, as the first pass of a new index does.
+fn migrate_v8_to_v9(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE source_dependency_names (
+             name TEXT NOT NULL,
+             slug TEXT NOT NULL,
+             PRIMARY KEY (name, slug)
+         ) WITHOUT ROWID;
+         CREATE INDEX idx_source_dependency_names_slug ON source_dependency_names(slug);
+
+         CREATE TRIGGER source_dependency_names_ad AFTER DELETE ON source_index_state BEGIN
+             DELETE FROM source_dependency_names WHERE slug = old.slug;
+         END;
+         CREATE TRIGGER source_dependency_names_au
+         AFTER UPDATE OF slug, source_stamp ON source_index_state BEGIN
+             DELETE FROM source_dependency_names WHERE slug = old.slug;
+         END;
+
+         DELETE FROM source_index_state;",
+    )
+    .context("failed to add the names of source dependencies")?;
+    Ok(())
+}
+
+/// The feed's order read through an index (SPEC_STORAGE.md, «Страница ленты
+/// по ключу»; `AUDIT_PERFORMANCE.md`, Л4).
+///
+/// A page of the feed is the cards after a place in the feed's order
+/// (`FeedOrder::order_by`): the save date, then the name without regard to
+/// ASCII case, then the name. Until this version no index held that order,
+/// and every page walked the whole table and sorted it. Each index holds the
+/// order of one direction, for the cards alone (collection pages are no
+/// cards of the feed): the date runs one way or the other while the name
+/// runs the same way in both, so one index read backwards cannot serve the
+/// second direction. The author's feed has the same two behind the author's
+/// key, for the cards that have an author: without that condition the open
+/// card's group of a site, which asks for cards with no author in the feed's
+/// order, was read through the author's index, every card without an author
+/// in turn. `idx_blocks_association_author` stays for the open card's
+/// groups.
+///
+/// `idx_channels_source_slug`: a card's link names a collection's page by
+/// the page's ref or by its path (`collection_membership_join_sql`). The ref
+/// had an index and the path had none, so every row of the feed went
+/// through every collection page of the space for each of its links to find
+/// its collections: 200 rows of a space of 300 collections, some 150 000
+/// pages looked at for one page of the feed.
+fn migrate_v9_to_v10(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX idx_blocks_feed_newest
+             ON blocks(saved_at DESC, slug COLLATE NOCASE, slug)
+             WHERE card_kind != 'channel';
+         CREATE INDEX idx_blocks_feed_oldest
+             ON blocks(saved_at, slug COLLATE NOCASE, slug)
+             WHERE card_kind != 'channel';
+         CREATE INDEX idx_blocks_author_feed_newest
+             ON blocks(association_author_key, saved_at DESC, slug COLLATE NOCASE, slug)
+             WHERE card_kind != 'channel' AND association_author_key IS NOT NULL;
+         CREATE INDEX idx_blocks_author_feed_oldest
+             ON blocks(association_author_key, saved_at, slug COLLATE NOCASE, slug)
+             WHERE card_kind != 'channel' AND association_author_key IS NOT NULL;
+         CREATE INDEX idx_channels_source_slug ON channels(source_slug);",
+    )
+    .context("failed to index the feed's order")?;
+    Ok(())
+}
+
 fn add_column_if_missing(conn: &Connection, name: &str, declaration: &str) -> Result<bool> {
     if block_columns(conn)?.contains_key(name) {
         return Ok(false);
@@ -715,6 +873,8 @@ pub(crate) fn validate_schema(conn: &Connection) -> Result<()> {
         "blocks_fts",
         &[("title", ""), ("description", ""), ("body", "")],
     )?;
+    validate_table_columns(conn, "search_word_chunks", &[("words", "")])?;
+    validate_table_columns(conn, "search_metadata_terms", &[("terms", "")])?;
 
     for index in REQUIRED_INDEXES {
         validate_schema_object(conn, "index", index)?;
@@ -1194,6 +1354,206 @@ mod tests {
             .unwrap(),
             1
         );
+    }
+
+    /// SPEC_SEARCH.md, «Отметка документа» and «Словарь слов»: version 8
+    /// keeps the search documents written before it, without a stamp, and
+    /// starts counting the changes a document depends on.
+    #[test]
+    fn version_eight_keeps_search_documents_and_counts_their_source_changes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE")
+            .unwrap();
+        migrate_v0_to_v1(&conn).unwrap();
+        migrate_v1_to_v2(&conn).unwrap();
+        migrate_v2_to_v3(&conn).unwrap();
+        migrate_v3_to_v4(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE index_build_state (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1))
+            );
+            INSERT INTO index_build_state (singleton, ready) VALUES (1, 1);",
+        )
+        .unwrap();
+        migrate_v5_to_v6(&conn).unwrap();
+        migrate_v6_to_v7(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 7).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, card_kind, saved_at, body, body_hash)
+             VALUES ('legacy-search', 'article', 'article', '2026-07-11T00:00:00Z', 'body', 'hash-1')",
+            [],
+        )
+        .unwrap();
+        let block_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO search_document_state (block_id, slug, document_hash)
+             VALUES (?1, 'legacy-search', 'document-hash')",
+            [block_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO search_chunks (
+                block_id, slug, field, chunk_index, text, start_char, end_char, text_hash
+             ) VALUES (?1, 'legacy-search', 'body', 0, 'legacy text', 0, 11, 'text-hash')",
+            [block_id],
+        )
+        .unwrap();
+        let chunk_id = conn.last_insert_rowid();
+
+        migrate_and_validate(&conn).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
+        let (hash, stamp): (String, Option<String>) = conn
+            .query_row(
+                "SELECT document_hash, source_stamp FROM search_document_state WHERE block_id = ?1",
+                [block_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((hash.as_str(), stamp), ("document-hash", None));
+        let revisions = |conn: &Connection| -> (i64, Option<i64>) {
+            conn.query_row(
+                "SELECT source_revision, synced_source_revision FROM search_state WHERE singleton = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(revisions(&conn), (0, None));
+
+        // A field no document depends on leaves the count alone.
+        conn.execute("UPDATE blocks SET preview_state = 'ready' WHERE id = ?1", [block_id])
+            .unwrap();
+        // So does a write that changes none of the fields it names.
+        conn.execute("UPDATE blocks SET body_hash = 'hash-1', author = NULL WHERE id = ?1", [block_id])
+            .unwrap();
+        assert_eq!(revisions(&conn).0, 0);
+        conn.execute("UPDATE blocks SET body_hash = 'hash-2' WHERE id = ?1", [block_id])
+            .unwrap();
+        assert_eq!(revisions(&conn).0, 1);
+        conn.execute(
+            "INSERT INTO blocks (slug, block_type, card_kind, saved_at, body)
+             VALUES ('new-card', 'article', 'article', '2026-07-12T00:00:00Z', '')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(revisions(&conn).0, 2);
+
+        // A chunk takes its rows of both word indexes with it, also when it
+        // goes with its card.
+        conn.execute(
+            "INSERT INTO search_word_chunks (rowid, words) VALUES (?1, 'legacy text')",
+            [chunk_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO search_metadata_terms (rowid, terms) VALUES (?1, 'legacy')",
+            [chunk_id],
+        )
+        .unwrap();
+        let indexed = |conn: &Connection, table: &str| -> i64 {
+            conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE {table} MATCH '\"legacy\"'"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(indexed(&conn, "search_word_chunks"), 1);
+        assert_eq!(indexed(&conn, "search_metadata_terms"), 1);
+        conn.execute("DELETE FROM blocks WHERE id = ?1", [block_id])
+            .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM search_chunks", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(indexed(&conn, "search_word_chunks"), 0);
+        assert_eq!(indexed(&conn, "search_metadata_terms"), 0);
+    }
+
+    /// SPEC_STORAGE.md, `source_dependency_names`: version 9 drops the source
+    /// stamps written before it, which carry no names, so the next pass
+    /// reads every note again; and names never outlive the stamp row they
+    /// were written with.
+    #[test]
+    fn version_nine_drops_stamps_without_names_and_keeps_names_with_their_stamp() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE")
+            .unwrap();
+        migrate_v0_to_v1(&conn).unwrap();
+        migrate_v1_to_v2(&conn).unwrap();
+        migrate_v2_to_v3(&conn).unwrap();
+        migrate_v3_to_v4(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE index_build_state (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1))
+            );
+            INSERT INTO index_build_state (singleton, ready) VALUES (1, 1);",
+        )
+        .unwrap();
+        migrate_v5_to_v6(&conn).unwrap();
+        migrate_v6_to_v7(&conn).unwrap();
+        migrate_v7_to_v8(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        conn.execute(
+            "INSERT INTO source_index_state (slug, source_kind, source_stamp)
+             VALUES ('Legacy', 'block', '{}')",
+            [],
+        )
+        .unwrap();
+
+        migrate_and_validate(&conn).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
+        let count = |conn: &Connection, table: &str| -> i64 {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(count(&conn, "source_index_state"), 0, "a stamp without names stayed");
+
+        let write_names = |conn: &Connection, slug: &str| {
+            conn.execute(
+                "INSERT INTO source_dependency_names (name, slug) VALUES ('photo.jpg', ?1)",
+                [slug],
+            )
+            .unwrap();
+        };
+        for slug in ["Kept", "Changed", "Gone"] {
+            conn.execute(
+                "INSERT INTO source_index_state (slug, source_kind, source_stamp)
+                 VALUES (?1, 'block', 'first')",
+                [slug],
+            )
+            .unwrap();
+            write_names(&conn, slug);
+        }
+        // A write that leaves the stamp as it is leaves the names.
+        conn.execute(
+            "UPDATE source_index_state SET updated_at = datetime('now') WHERE slug = 'Kept'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE source_index_state SET source_stamp = 'second' WHERE slug = 'Changed'",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM source_index_state WHERE slug = 'Gone'", [])
+            .unwrap();
+        let named: Vec<String> = conn
+            .prepare("SELECT slug FROM source_dependency_names ORDER BY slug")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(named, ["Kept"]);
     }
 
     #[test]

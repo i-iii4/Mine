@@ -1141,7 +1141,6 @@
         "src/components/FeedDisplayMenu.tsx",
         "src/components/FeedDisplayMenu.test.tsx",
         "src/components/ui/dropdown-menu.tsx",
-        "src/components/ui/context-menu.tsx",
         "src/components/MainSecondaryChrome.tsx",
         "src/components/MainSecondaryChrome.test.tsx",
         "src/components/Grid.tsx",
@@ -1161,7 +1160,6 @@
         "src/lib/gridLayoutReadiness.test.ts",
         "src/App.test.tsx",
         "src/components/ui/dropdown-menu.test.tsx",
-        "src/components/ui/context-menu.test.tsx",
         "src/lib/fontMetrics.test.ts",
         "src/lib/layoutGeneration.test.ts",
         "src/settings/AppearanceSection.test.tsx"
@@ -1786,7 +1784,6 @@
         "extension/popup/components/ClipperOverflowMenu.tsx",
         "extension/popup/components/VaultSelect.tsx",
         "src/components/ArticleAudioControls.tsx",
-        "src/components/CardContextMenu.tsx",
         "src/components/GroupSelectionCardMenu.tsx",
         "src/components/GroupSelectionCommands.tsx",
         "src/components/MenuTextTrigger.tsx",
@@ -1876,7 +1873,7 @@
       ],
       "requirement": "DESIGN_SYSTEM.md#### Открытое меню",
       "tests": [
-        "src/components/ui/context-menu.test.tsx"
+        "src/components/SpecPointMenu.test.tsx"
       ],
       "command": "test:frontend"
     },
@@ -1959,8 +1956,6 @@
         "src/components/ui/tooltip.tsx",
         "src/components/ui/dropdown-menu.tsx",
         "src/components/ui/dropdown-menu.test.tsx",
-        "src/components/ui/context-menu.tsx",
-        "src/components/ui/context-menu.test.tsx",
         "src/components/ui/tabs.test.tsx",
         "src/tabbar/TabBar.tsx",
         "src/tabbar/TabBar.test.tsx",
@@ -1973,7 +1968,6 @@
         "src/components/ActionButton.test.tsx",
         "src/components/BottomBarCommands.test.tsx",
         "src/components/ui/dropdown-menu.test.tsx",
-        "src/components/ui/context-menu.test.tsx",
         "src/components/ui/tabs.test.tsx",
         "src/tabbar/TabBar.test.tsx",
         "src/components/Sidebar.test.tsx",
@@ -2064,7 +2058,6 @@
         "src/components/ui/dropdown-menu.test.tsx",
         "src/components/VaultSwitcher.test.tsx",
         "src/App.test.tsx",
-        "src/components/ui/context-menu.test.tsx",
         "src/components/GroupSelectionCommands.test.tsx",
         "src/components/Detail.test.tsx",
         "extension/popup/components/ClipperOverflowMenu.test.tsx",
@@ -2237,15 +2230,12 @@
       "paths": [
         "src/lib/cardTabDrop.ts",
         "src/lib/cardTabDrop.test.ts",
-        "src/hooks/useCardDragToTabBar.ts",
-        "src/hooks/useCardDragToTabBar.test.tsx",
         "src/components/OpenCardTabsDialog.tsx",
         "src/components/OpenCardTabsDialog.test.tsx"
       ],
       "requirement": "SPEC_TABS.md### Перетаскивание",
       "tests": [
         "src/lib/cardTabDrop.test.ts",
-        "src/hooks/useCardDragToTabBar.test.tsx",
         "src/components/OpenCardTabsDialog.test.tsx",
         "src/tabbar/TabBar.test.tsx",
         "src/tabbar/TabBarApp.test.tsx"
@@ -4338,12 +4328,23 @@
     },
     {
       "paths": [
-        "src/lib/sidebarRowsMorph.ts",
-        "src/lib/sidebarRowsMorph.test.ts"
+        "src/lib/spring.ts",
+        "src/lib/spring.test.ts"
       ],
-      "requirement": "DESIGN_SYSTEM.md#### Компактная строка боковой панели (22.10.2026)",
+      "requirement": "SPEC_MOTION_LEVELS.md### Роли движения",
       "tests": [
-        "src/lib/sidebarRowsMorph.test.ts"
+        "src/lib/spring.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/storedChoice.ts",
+        "src/lib/storedChoice.test.ts"
+      ],
+      "requirement": "SPEC_CARD_PEEK.md### Правила",
+      "tests": [
+        "src/lib/storedChoice.test.ts"
       ],
       "command": "test:frontend"
     },
@@ -4861,32 +4862,13 @@
     },
     {
       "paths": [
-        "src/components/ChannelIcon.tsx",
-        "src/lib/channelIcon.ts",
-        "src/lib/channelIcon.test.ts",
         "src/lib/textClip.ts",
-        "src/lib/textClip.test.ts",
-        "src/components/ChannelIcon.test.tsx"
+        "src/lib/textClip.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Компактная строка боковой панели (22.10.2026)",
       "tests": [
         "src/components/Sidebar.test.tsx",
-        "src/lib/channelIcon.test.ts",
-        "src/lib/textClip.test.ts",
-        "src/components/ChannelIcon.test.tsx"
-      ],
-      "command": "test:frontend"
-    },
-    {
-      "paths": [
-        "src/lib/compactStack.ts",
-        "src/components/CompactStackMenu.tsx",
-        "src/components/CompactStackMenu.test.tsx"
-      ],
-      "requirement": "DESIGN_SYSTEM.md#### Компактная строка боковой панели (22.10.2026)",
-      "tests": [
-        "src/components/CompactStackMenu.test.tsx",
-        "src/components/Sidebar.test.tsx"
+        "src/lib/textClip.test.ts"
       ],
       "command": "test:frontend"
     },
@@ -5318,13 +5300,12 @@
     },
     {
       "paths": [
-        "src/components/CardContextMenu.tsx",
-        "src/components/CardContextMenu.test.tsx",
+        "src/components/CardPointMenu.test.tsx",
         "src/menuPanel/MenuPanelApp.test.tsx"
       ],
       "requirement": "SPEC_FRONTEND.md#### CollectionPicker",
       "tests": [
-        "src/components/CardContextMenu.test.tsx",
+        "src/components/CardPointMenu.test.tsx",
         "src/menuPanel/MenuPanelApp.test.tsx"
       ],
       "command": "test:frontend"
@@ -5402,6 +5383,31 @@
         "src/components/MenuSpecView.test.tsx",
         "src/hooks/usePanelMenu.ts",
         "src/hooks/usePanelMenu.test.tsx",
+        "src/hooks/useSpecMenu.ts",
+        "src/hooks/useSpecMenu.test.tsx",
+        "src/hooks/useGroupSelectionMenu.ts",
+        "src/hooks/useGroupSelectionMenu.test.tsx",
+        "src/lib/groupSelectionMenu.ts",
+        "src/lib/groupSelectionMenu.test.ts",
+        "src/lib/openCardMenus.ts",
+        "src/lib/openCardMenus.test.ts",
+        "src/components/SpecPointMenu.tsx",
+        "src/components/SpecPointMenu.test.tsx",
+        "src/components/NewCardCollectionPicker.tsx",
+        "src/components/NewCardCollectionPicker.test.tsx",
+        "src/lib/displayMenu.ts",
+        "src/lib/displayMenu.test.ts",
+        "src/components/DisplayMenu.menuPanel.test.tsx",
+        "src/settings/OpenSpaceSelect.tsx",
+        "src/settings/OpenSpaceSelect.test.tsx",
+        "src/tabbar/barMenus.ts",
+        "src/tabbar/barMenus.test.ts",
+        "src/tabbar/useBarMenu.ts",
+        "src/tabbar/useBarMenu.test.tsx",
+        "src/components/SpaceList.tsx",
+        "src/components/SpaceList.test.tsx",
+        "src/lib/collectionRowMenu.ts",
+        "src/lib/collectionRowMenu.test.ts",
         "src/lib/menuPanelProtocol.ts",
         "src/lib/menuPanelProtocol.test.ts",
         "src/lib/menuPanelSource.ts",
@@ -5426,6 +5432,19 @@
         "src/lib/cardMenuEntries.test.ts",
         "src/components/MenuSpecView.test.tsx",
         "src/hooks/usePanelMenu.test.tsx",
+        "src/hooks/useSpecMenu.test.tsx",
+        "src/hooks/useGroupSelectionMenu.test.tsx",
+        "src/lib/groupSelectionMenu.test.ts",
+        "src/lib/openCardMenus.test.ts",
+        "src/components/SpecPointMenu.test.tsx",
+        "src/components/NewCardCollectionPicker.test.tsx",
+        "src/lib/displayMenu.test.ts",
+        "src/components/DisplayMenu.menuPanel.test.tsx",
+        "src/settings/OpenSpaceSelect.test.tsx",
+        "src/tabbar/barMenus.test.ts",
+        "src/tabbar/useBarMenu.test.tsx",
+        "src/components/SpaceList.test.tsx",
+        "src/lib/collectionRowMenu.test.ts",
         "src/lib/menuPanelProtocol.test.ts",
         "src/lib/menuPanelSource.test.ts",
         "src/menuPanel/MenuPanelApp.test.tsx",
@@ -5454,7 +5473,8 @@
         "src-tauri/src/menu_panel/geometry.rs",
         "src-tauri/src/menu_panel/native.rs",
         "src-tauri/src/menu_panel/spec.rs",
-        "src-tauri/src/commands/menu_panel.rs"
+        "src-tauri/src/commands/menu_panel.rs",
+        "src-tauri/tests/menu_panel_window.rs"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Меню карточки в отдельном окне: проба",
       "tests": [
@@ -5462,6 +5482,7 @@
         "src-tauri/src/menu_panel/geometry.rs",
         "src-tauri/src/menu_panel/native.rs",
         "src-tauri/src/menu_panel/spec.rs",
+        "src-tauri/tests/menu_panel_window.rs",
         "src-tauri/src/commands/effects.rs",
         "src-tauri/src/lib.rs"
       ],
@@ -5478,6 +5499,18 @@
         "scripts/menu-panel-audit.mjs"
       ],
       "command": "test:menu-panel"
+    },
+    {
+      "paths": [
+        "scripts/fade-text-audit.mjs",
+        "src/dev/fade-text-probe.html",
+        "src/dev/fadeTextProbe.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Растворение кромок (edge fade)",
+      "tests": [
+        "scripts/fade-text-audit.mjs"
+      ],
+      "command": "test:fade-text"
     },
     {
       "paths": [
@@ -5629,12 +5662,282 @@
         "src/components/grid/feedLayout.ts",
         "src/components/grid/feedLayout.test.ts",
         "src/components/grid/wordMetrics.ts",
-        "src/components/grid/wordMetrics.test.ts"
+        "src/components/grid/wordMetrics.test.ts",
+        "src/components/grid/feedIndex.ts",
+        "src/components/grid/feedIndex.test.ts"
       ],
       "requirement": "SPEC_GRID.md### Кэш при карточке и продолжение раскладки (15.11.2026)",
       "tests": [
         "src/components/grid/feedLayout.test.ts",
-        "src/components/grid/wordMetrics.test.ts"
+        "src/components/grid/wordMetrics.test.ts",
+        "src/components/grid/feedIndex.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardTextIdentity.ts",
+        "src/lib/cardTextIdentity.test.ts"
+      ],
+      "requirement": "SPEC_GRID.md### Кэш при карточке и продолжение раскладки (15.11.2026)",
+      "tests": [
+        "src/lib/cardTextIdentity.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/Grid.feedGrowth.test.tsx"
+      ],
+      "requirement": "SPEC_GRID.md### Кэш при карточке и продолжение раскладки (15.11.2026)",
+      "tests": [
+        "src/components/Grid.feedGrowth.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/feed-growth-audit.mjs",
+        "src/dev/FeedGrowthAuditRoute.tsx"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Проверка роста ленты",
+      "tests": [
+        "scripts/feed-growth-audit.mjs"
+      ],
+      "command": "test:feed-growth"
+    },
+    {
+      "paths": [
+        "src/dev/FeedGrowthAuditRoute.tsx",
+        "src/dev/FeedGrowthAuditRoute.test.tsx"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Проверка роста ленты",
+      "tests": [
+        "src/dev/FeedGrowthAuditRoute.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/feed_changes.rs"
+      ],
+      "requirement": "SPEC_INTEGRATION.md### Список изменённых карточек",
+      "tests": [
+        "src-tauri/src/storage/feed_changes.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/feed_read_log.rs"
+      ],
+      "requirement": "SPEC_INTEGRATION.md### Замер чтений ленты",
+      "tests": [
+        "src-tauri/src/commands/feed_read_log.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/feedChanges.ts",
+        "src/lib/feedChanges.test.ts",
+        "src/lib/feedPatch.ts",
+        "src/lib/feedPatch.test.ts",
+        "src/App.feedChanges.test.tsx",
+        "src/test/feedBackend.ts"
+      ],
+      "requirement": "SPEC_FRONTEND.md#### Обновление ленты",
+      "tests": [
+        "src/lib/feedChanges.test.ts",
+        "src/lib/feedPatch.test.ts",
+        "src/App.feedChanges.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/hoverPreviewPresenter.ts",
+        "src/lib/hoverPreviewPresenter.test.ts",
+        "src/lib/hoverPreviewWindow.ts",
+        "src/components/HoverPreviewWindow.tsx"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md#### 6.1 Части",
+      "tests": [
+        "src/lib/hoverPreviewPresenter.test.ts",
+        "src/lib/hoverPreviewWindow.test.ts",
+        "src/components/HoverPreviewWindow.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/outsideWindow/outsidePreviewPage.ts",
+        "src/outsideWindow/outsidePreviewPage.test.ts",
+        "src/outsideWindow/OutsideWindowApp.tsx",
+        "src/outsideWindow/OutsideWindowApp.test.tsx",
+        "src/outsideWindow/main.tsx",
+        "src/outsideWindow/outsideWindow.css",
+        "src/lib/outsideWindowCommands.ts",
+        "outside-window.html",
+        "vite.config.ts",
+        "src-tauri/capabilities/default.json"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md### 6. Одно наружное окно на оба случая, отдельное от окна меню",
+      "tests": [
+        "src/outsideWindow/outsidePreviewPage.test.ts",
+        "src/outsideWindow/OutsideWindowApp.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/outside-window-audit.mjs",
+        "outside-window.html"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md### 6. Одно наружное окно на оба случая, отдельное от окна меню",
+      "tests": [
+        "scripts/outside-window-audit.mjs"
+      ],
+      "command": "test:outside-window"
+    },
+    {
+      "paths": [
+        "src-tauri/src/outside_window/mod.rs",
+        "src-tauri/src/outside_window/geometry.rs",
+        "src-tauri/src/outside_window/native.rs",
+        "src-tauri/src/commands/outside_window.rs",
+        "src-tauri/tests/outside_window.rs",
+        "src-tauri/src/menu_panel/native.rs",
+        "src-tauri/src/menu_panel/mod.rs"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md### 6. Одно наружное окно на оба случая, отдельное от окна меню",
+      "tests": [
+        "src-tauri/src/outside_window/mod.rs",
+        "src-tauri/src/outside_window/geometry.rs",
+        "src-tauri/src/menu_panel/mod.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/tests/outside_window.rs",
+        "src-tauri/tests/menu_panel_window.rs",
+        "src-tauri/src/commands/effects.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/outsidePreviewSource.ts",
+        "src/lib/hoverPreviewOutside.test.ts",
+        "src/lib/hoverPreviewWindow.ts",
+        "src/components/HoverPreviewWindow.tsx",
+        "src/components/Sidebar.tsx",
+        "src/components/Detail.tsx",
+        "src/lib/cardCollections.ts"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md### 2. Где стоит окно превью",
+      "tests": [
+        "src/lib/hoverPreviewOutside.test.ts",
+        "src/components/Sidebar.test.tsx",
+        "src/components/Detail.test.tsx",
+        "src/components/HoverPreviewWindow.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useCardDragAcrossWindows.ts",
+        "src/hooks/useCardDragAcrossWindows.test.tsx",
+        "src/lib/remoteCardDrop.ts",
+        "src/lib/remoteCardDrop.test.ts",
+        "src/lib/cardTabDrop.ts",
+        "src/lib/cardTabDrop.test.ts",
+        "src/App.tsx",
+        "src/components/Card.tsx",
+        "src/outsideWindow/OutsideWindowApp.tsx"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md### 5. Правила",
+      "tests": [
+        "src/hooks/useCardDragAcrossWindows.test.tsx",
+        "src/lib/remoteCardDrop.test.ts",
+        "src/lib/cardTabDrop.test.ts",
+        "src/App.test.tsx",
+        "src/components/Card.test.tsx",
+        "src/outsideWindow/OutsideWindowApp.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/tabs/drag.rs",
+        "src-tauri/src/commands/tabs.rs",
+        "src-tauri/src/outside_window/mod.rs",
+        "src-tauri/src/outside_window/geometry.rs",
+        "src-tauri/src/outside_window/native.rs"
+      ],
+      "requirement": "SPEC_OUTSIDE_WINDOW.md### 5. Правила",
+      "tests": [
+        "src-tauri/src/tabs/drag.rs",
+        "src-tauri/src/outside_window/geometry.rs",
+        "src-tauri/src/outside_window/mod.rs",
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/commands/effects.rs",
+        "src-tauri/tests/outside_window.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/SidebarSearchDropTarget.tsx",
+        "src/lib/sidebarDndCollision.ts",
+        "src/lib/sidebarDndCollision.test.ts",
+        "src/lib/remoteCardDrop.ts",
+        "src/lib/remoteCardDrop.test.ts",
+        "src/components/Sidebar.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/styles/global.css",
+        "src/lib/sidebarColumns.test.ts",
+        "src/components/SidebarSearchDropTarget.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Создание коллекции",
+      "tests": [
+        "src/lib/sidebarDndCollision.test.ts",
+        "src/lib/remoteCardDrop.test.ts",
+        "src/components/Sidebar.test.tsx",
+        "src/App.test.tsx",
+        "src/lib/sidebarColumns.test.ts",
+        "src/components/SidebarSearchDropTarget.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/channels.rs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Создание коллекции",
+      "tests": [
+        "src-tauri/src/commands/channels.rs",
+        "src-tauri/src/commands/effects.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/styles/uiVocabulary.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Словарь сущностей (UI-нейминг)",
+      "tests": [
+        "src/styles/uiVocabulary.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardAssociations.ts",
+        "src/lib/cardAssociations.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Словарь сущностей (UI-нейминг)",
+      "tests": [
+        "src/lib/cardAssociations.test.ts"
       ],
       "command": "test:frontend"
     }

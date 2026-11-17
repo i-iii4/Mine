@@ -855,10 +855,13 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             let path = vault.root().join(&source.path);
             // A note iCloud keeps off this Mac is brought down by this read:
             // tests count it (`cloud_files::test_seam`).
-            #[cfg(debug_assertions)]
-            crate::storage::cloud_files::test_seam::note_read(&path);
-            let content = match std::fs::read_to_string(&path) {
+            let content = match crate::storage::cloud_files::read_to_string(&path) {
                 Ok(content) => content,
+                // Its contents are in iCloud and the read may not bring them
+                // down: not a note that cannot be read. It stays pending and
+                // the pass that finds it here reads it (SPEC_CLOUD_STORAGE.md,
+                // «Отказ чтения»).
+                Err(error) if crate::storage::cloud_files::is_refusal(&error) => continue,
                 Err(error) => {
                     moves.read_errors.push((path, error.to_string()));
                     continue;

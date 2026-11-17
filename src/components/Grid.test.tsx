@@ -932,7 +932,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     expect(screen.getByText("Rename…")).toBeInTheDocument();
     // The menu comes out of the badge: the trigger finds it from inside the card.
-    const trigger = focusedWrapper?.querySelector<HTMLElement>('[aria-label="Card actions"]');
+    const trigger = focusedWrapper?.querySelector<HTMLElement>('[aria-label="Element actions"]');
     expect(cardMenuBadgeOf(trigger!)).toBe(actionBadge);
     // Keyboard use shows the chord alone, with its menu open too (С8.8), and the
     // card stays lifted (С8.5).
@@ -1604,7 +1604,7 @@ describe("Grid — no collapse after add / revisit", () => {
         expect(raised("block-9452")).toBe(true);
         // The real order in WebKit: the press opens the menu, the pointer goes onto
         // it, the menu closes, and only `pointerover` tells the card at that point.
-        fireEvent.pointerDown(card.querySelector('[aria-label="Card actions"]')!, { button: 0, ctrlKey: false });
+        fireEvent.pointerDown(card.querySelector('[aria-label="Element actions"]')!, { button: 0, ctrlKey: false });
         await flushAsync();
         step(surface(), 1, 40);
         fireEvent.keyDown(surface(), { key: "Escape" });
@@ -1615,7 +1615,12 @@ describe("Grid — no collapse after add / revisit", () => {
         expect(raised("block-9452")).toBe(true);
       });
 
-      it("after a right click's menu opened under the pointer", async () => {
+      /** The card keeps its hover look, held by a right click's menu. */
+      const held = (slug: string) =>
+        frameOf(slug).hasAttribute("data-card-lift-pinned")
+        && (gridItemForSlug(slug)!.querySelector("[data-card-hover-more-action]")?.classList.contains("opacity-100") ?? false);
+
+      it("after a right click's menu opened under the pointer, the card held in its hover look all along", async () => {
         render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
         await flushAsync();
         const card = gridItemForSlug("block-9452")!;
@@ -1624,14 +1629,40 @@ describe("Grid — no collapse after add / revisit", () => {
         expect(raised("block-9452")).toBe(true);
         fireEvent.contextMenu(card.querySelector("[data-block-slug]")!);
         await flushAsync();
+        // The context menu holds every hover answer, and the card it opened
+        // on keeps its look (user's decision of 16.11.2026).
         expect(raised("block-9452")).toBe(false);
+        expect(held("block-9452")).toBe(true);
+        expect(held("block-9451")).toBe(false);
         // The surface under the pointer takes it off the feed.
         fireEvent.pointerLeave(document.querySelector("[data-grid-scroll]")!);
+        expect(held("block-9452")).toBe(true);
         fireEvent.keyDown(surface(), { key: "Escape" });
         await flushAsync();
-        expect(raised("block-9452")).toBe(false);
+        // Closed, the pointer not yet seen: the look holds, no drop and rise.
+        expect(held("block-9452")).toBe(true);
         fireEvent.pointerOver(frameOf("block-9452"), { clientX: at.x, clientY: 50 });
         expect(raised("block-9452")).toBe(true);
+        expect(held("block-9452")).toBe(true);
+        // The pointer on another card lets it go.
+        fireEvent.pointerOver(frameOf("block-9451"), { clientX: at.x, clientY: 50 });
+        expect(held("block-9452")).toBe(false);
+      });
+
+      it("lets a right click's card go once its closed menu's pointer shows itself off the card", async () => {
+        render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+        await flushAsync();
+        fireEvent.contextMenu(gridItemForSlug("block-9452")!.querySelector("[data-block-slug]")!);
+        await flushAsync();
+        expect(held("block-9452")).toBe(true);
+        // A pointer event over the open menu says nothing of the card.
+        fireEvent.pointerOver(surface(), { clientX: at.x, clientY: 50 });
+        expect(held("block-9452")).toBe(true);
+        fireEvent.keyDown(surface(), { key: "Escape" });
+        await flushAsync();
+        fireEvent.pointerOver(frameOf("block-9451"), { clientX: at.x, clientY: 50 });
+        expect(held("block-9452")).toBe(false);
+        expect(held("block-9451")).toBe(false);
       });
 
       it("С7.5: the same event at the same point lifts nothing on a card that slid under the pointer", async () => {
@@ -2923,7 +2954,11 @@ describe("Grid — no collapse after add / revisit", () => {
     });
 
     expect(document.querySelector("[data-feed-grid-selection-context-menu]")).toBeNull();
-    const menu = document.querySelector("[data-slot='context-menu-content']") as HTMLElement;
+    // The card's menu, off an anchor of no size on the point of the click
+    // (SPEC_MENU_WINDOW.md, МО10, МО68).
+    expect(document.querySelector("[data-card-point-menu-anchor]")).not.toBeNull();
+    const menu = document.querySelector("[role='menu']") as HTMLElement;
+    expect([menu.getAttribute("data-side"), menu.getAttribute("data-align")]).toEqual(["right", "start"]);
     expect(within(menu).getByText("Reveal in Finder")).toBeInTheDocument();
   });
 

@@ -104,8 +104,8 @@ export function collectionPreviewRows(content: Pick<CollectionPreviewContent, "c
   return Math.ceil((content.cards.length + content.placeholders) / COLLECTION_PREVIEW_COLUMNS);
 }
 
-/** "1 element", "12 elements": the count as a compact row of the sidebar
- *  writes it (Sidebar.tsx, `SidebarCountNoun`). */
+/** "1 element", "12 elements": «Element» is the product's name for a card
+ *  (Open element, Find elements). */
 export function collectionCountLabel(count: number): string {
   return `${count} ${count === 1 ? "element" : "elements"}`;
 }
